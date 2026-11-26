@@ -186,7 +186,9 @@ impl<'a> Splitter<'a> {
                         i += 2;
                         continue;
                     }
-                    if c.is_ascii_alphabetic() || c == b'_' {
+                    // Non-ASCII bytes start identifiers too, which also keeps `i` on character
+                    // boundaries in code.
+                    if c.is_ascii_alphabetic() || c == b'_' || c >= 0x80 {
                         let end = word_end(self.b, i);
                         if !self.ident_before(i) {
                             let word = self.s[i..end].to_ascii_uppercase();
@@ -205,7 +207,8 @@ impl<'a> Splitter<'a> {
                         continue;
                     }
                     // Statement terminator.
-                    if !self.rules.go_batches && self.s[i..].starts_with(self.delimiter.as_str()) {
+                    if !self.rules.go_batches && self.b[i..].starts_with(self.delimiter.as_bytes())
+                    {
                         let ends = match &block {
                             None => true,
                             Some(mode) => mode.closed(),
@@ -275,7 +278,7 @@ impl<'a> Splitter<'a> {
                     }
                 }
                 State::Dollar => {
-                    if self.s[i..].starts_with(self.dollar_tag.as_str()) {
+                    if self.b[i..].starts_with(self.dollar_tag.as_bytes()) {
                         i += self.dollar_tag.len();
                         state = State::Normal;
                     } else {
@@ -339,8 +342,11 @@ impl<'a> Splitter<'a> {
     }
 
     fn at_line_start(&self, i: usize) -> bool {
-        let line_start = self.s[..i].rfind('\n').map_or(0, |n| n + 1);
-        self.s[line_start..i].trim().is_empty()
+        let line_start = self.b[..i]
+            .iter()
+            .rposition(|&c| c == b'\n')
+            .map_or(0, |n| n + 1);
+        self.b[line_start..i].iter().all(u8::is_ascii_whitespace)
     }
 
     fn ident_before(&self, i: usize) -> bool {
