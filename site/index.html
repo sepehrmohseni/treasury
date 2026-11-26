@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Treasury: a client for ten database engines</title>
+<meta name="description" content="Treasury is an open-source desktop and mobile client for PostgreSQL, MySQL, SQL Server, MongoDB, Redis, Cassandra, Snowflake, Databricks SQL, Oracle and Db2. No account, no telemetry.">
+<link rel="icon" href="mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header class="masthead">
+    <img class="mark" src="mark.svg" width="40" height="40" alt="">
+    <div>
+      <h1>Treasury</h1>
+      <p class="lede">An open-source desktop and mobile client for PostgreSQL, MySQL and MariaDB, SQL Server, MongoDB, Redis and Valkey, Cassandra and ScyllaDB, Snowflake, Databricks SQL, Oracle and Db2.</p>
+    </div>
+  </header>
+
+  <p class="status"><span class="status-label">Status</span> In development. There is no release yet; the first one will be 0.1.0. Progress is public in the <a href="https://github.com/sepehrmohseni/treasury/commits/main">commit history</a>.</p>
+
+  <section aria-labelledby="principles">
+    <h2 id="principles">What it is built to be</h2>
+    <dl class="facts">
+      <dt>Free and complete</dt>
+      <dd>No account, no paid tier, no engine held back. Licensed MIT or Apache-2.0.</dd>
+      <dt>Careful with production</dt>
+      <dd>Production connections open read-only. Updates and deletes outside your own machine show how many rows they would change before they run. On production, dropping, truncating or altering a table asks you to type the connection name.</dd>
+      <dt>Built for large results</dt>
+      <dd>Rows are read from the server as you scroll, so a result of millions of rows does not have to fit in memory.</dd>
+      <dt>Usable without a model</dt>
+      <dd>Model features are optional and use your own key with the provider you choose. Nothing depends on them.</dd>
+    </dl>
+  </section>
+
+  <section aria-labelledby="engines">
+    <h2 id="engines">Engines</h2>
+    <p class="note">Planned for the first release. This table will say what each engine supports once it ships.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th scope="col">Engine</th><th scope="col">Desktop</th><th scope="col">Android and iOS</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">PostgreSQL</th><td>Yes</td><td>Yes</td></tr>
+          <tr><th scope="row">MySQL, MariaDB</th><td>Yes</td><td>Yes</td></tr>
+          <tr><th scope="row">SQL Server</th><td>Yes</td><td>Yes</td></tr>
+          <tr><th scope="row">MongoDB</th><td>Yes</td><td>Yes</td></tr>
+          <tr><th scope="row">Redis, Valkey</th><td>Yes</td><td>Yes</td></tr>
+          <tr><th scope="row">Cassandra, ScyllaDB</th><td>Yes</td><td>Yes</td></tr>
+          <tr><th scope="row">Snowflake</th><td>Yes</td><td>Yes</td></tr>
+          <tr><th scope="row">Databricks SQL</th><td>Yes</td><td>Yes</td></tr>
+          <tr><th scope="row">Oracle</th><td>Yes, with Oracle Instant Client installed</td><td>No</td></tr>
+          <tr><th scope="row">Db2</th><td>Yes, with the IBM CLI driver installed</td><td>No</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="network">
+    <h2 id="network">What goes over the network</h2>
+    <dl class="facts">
+      <dt>Your databases and SSH hosts</dt>
+      <dd>When you connect to them.</dd>
+      <dt>A model provider</dt>
+      <dd>Only if you set one up, only when you run a model action, and only after Treasury shows you exactly what it will send. Schema metadata by default; row values only when you tick a box for that request.</dd>
+      <dt>GitHub</dt>
+      <dd>An update check, which you can turn off on the first screen. It is the only request Treasury makes on its own.</dd>
+      <dt>Nothing else</dt>
+      <dd>No analytics, no crash reports, no remote fonts, scripts or images. This page loads nothing from other sites either.</dd>
+    </dl>
+  </section>
+
+  <footer>
+    <a href="https://github.com/sepehrmohseni/treasury">Source on GitHub</a>
+    <span aria-hidden="true">·</span>
+    <span>MIT or Apache-2.0</span>
+    <span aria-hidden="true">·</span>
+    <a href="fonts/OFL.txt">IBM Plex Mono license</a>
+  </footer>
+</main>
+</body>
+</html>
