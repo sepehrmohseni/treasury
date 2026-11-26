@@ -21,6 +21,14 @@ scripts/docker-check.sh fmt        # format the checkout
 The script mounts the checkout read-only, keeps build outputs and caches in Docker volumes, and
 uses half of the CPU cores unless `TREASURY_CI_CPUS` says otherwise.
 
+## Project page
+
+The page at [sepehrmohseni.github.io/treasury](https://sepehrmohseni.github.io/treasury/) is
+plain HTML and CSS in `site/`. Its statement table comes from the analyzer and guardrails, and a
+test fails when the page and the code disagree. After changing either, print the new rows with
+`scripts/docker-check.sh -- cargo run -q -p treasury-tests --example site-statements` and put
+them between the `statements` markers in `site/index.html`.
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT)

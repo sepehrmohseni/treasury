@@ -4,82 +4,195 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
-<title>Treasury: a client for ten database engines</title>
-<meta name="description" content="Treasury is an open-source desktop and mobile client for PostgreSQL, MySQL, SQL Server, MongoDB, Redis, Cassandra, Snowflake, Databricks SQL, Oracle and Db2. No account, no telemetry.">
+<title>Treasury: a database client that reads your SQL before the server does</title>
+<meta name="description" content="Treasury is an open-source desktop and mobile database client. It knows which statements write, counts the rows a change would touch, and keeps production read-only until you unlock it.">
+<meta name="color-scheme" content="light dark">
 <link rel="icon" href="mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<header class="bar">
+  <div class="wrap bar-inner">
+    <a class="brand" href="./">
+      <img src="mark.svg" width="28" height="28" alt="">
+      <span>Treasury</span>
+    </a>
+    <nav aria-label="Page">
+      <a href="#statements">How it decides</a>
+      <a href="#engines">Engines</a>
+      <a href="https://github.com/sepehrmohseni/treasury">Source</a>
+    </nav>
+  </div>
+</header>
+
 <main>
-  <header class="masthead">
-    <img class="mark" src="mark.svg" width="40" height="40" alt="">
-    <div>
-      <h1>Treasury</h1>
-      <p class="lede">An open-source desktop and mobile client for PostgreSQL, MySQL and MariaDB, SQL Server, MongoDB, Redis and Valkey, Cassandra and ScyllaDB, Snowflake, Databricks SQL, Oracle and Db2.</p>
+  <section class="hero wrap">
+    <h1>A database client that reads your SQL before the server does.</h1>
+    <div class="hero-text">
+      <p class="lede">Treasury is an open-source desktop and mobile client for PostgreSQL, MySQL, SQL Server, MongoDB, Redis, Cassandra, Snowflake, Databricks, Oracle and Db2. It knows which statements write, counts the rows an UPDATE or DELETE would change, and keeps production read-only until you unlock it.</p>
+      <p class="status"><span class="pill">In development</span> No release yet. Version 0.1.0 comes out when the desktop app is complete. <a href="https://github.com/sepehrmohseni/treasury/commits/main">Follow the work</a></p>
     </div>
-  </header>
-
-  <p class="status"><span class="status-label">Status</span> In development. There is no release yet; the first one will be 0.1.0. Progress is public in the <a href="https://github.com/sepehrmohseni/treasury/commits/main">commit history</a>.</p>
-
-  <section aria-labelledby="principles">
-    <h2 id="principles">What it is built to be</h2>
-    <dl class="facts">
-      <dt>Free and complete</dt>
-      <dd>No account, no paid tier, no engine held back. Licensed MIT or Apache-2.0.</dd>
-      <dt>Careful with production</dt>
-      <dd>Production connections open read-only. Updates and deletes outside your own machine show how many rows they would change before they run. On production, dropping, truncating or altering a table asks you to type the connection name.</dd>
-      <dt>Built for large results</dt>
-      <dd>Rows are read from the server as you scroll, so a result of millions of rows does not have to fit in memory.</dd>
-      <dt>Usable without a model</dt>
-      <dd>Model features are optional and use your own key with the provider you choose. Nothing depends on them.</dd>
-    </dl>
   </section>
 
-  <section aria-labelledby="engines">
-    <h2 id="engines">Engines</h2>
-    <p class="note">Planned for the first release. This table will say what each engine supports once it ships.</p>
-    <div class="table-wrap">
-      <table>
+  <section class="wrap" id="statements" aria-labelledby="statements-title">
+    <div class="section-head">
+      <h2 id="statements-title">What happens when you press Run on production</h2>
+      <p>Production connections open read-only, and anything that could write is refused. Unlocking writes lasts 15 minutes. These ten statements show what Treasury does with each, before and after the unlock.</p>
+    </div>
+    <div class="ledger-wrap">
+      <table class="ledger">
         <thead>
-          <tr><th scope="col">Engine</th><th scope="col">Desktop</th><th scope="col">Android and iOS</th></tr>
+          <tr>
+            <th scope="col" class="n"><span class="visually-hidden">Row</span></th>
+            <th scope="col">Statement</th>
+            <th scope="col">Read as</th>
+            <th scope="col">Read-only</th>
+            <th scope="col">Writes unlocked</th>
+          </tr>
         </thead>
         <tbody>
-          <tr><th scope="row">PostgreSQL</th><td>Yes</td><td>Yes</td></tr>
-          <tr><th scope="row">MySQL, MariaDB</th><td>Yes</td><td>Yes</td></tr>
-          <tr><th scope="row">SQL Server</th><td>Yes</td><td>Yes</td></tr>
-          <tr><th scope="row">MongoDB</th><td>Yes</td><td>Yes</td></tr>
-          <tr><th scope="row">Redis, Valkey</th><td>Yes</td><td>Yes</td></tr>
-          <tr><th scope="row">Cassandra, ScyllaDB</th><td>Yes</td><td>Yes</td></tr>
-          <tr><th scope="row">Snowflake</th><td>Yes</td><td>Yes</td></tr>
-          <tr><th scope="row">Databricks SQL</th><td>Yes</td><td>Yes</td></tr>
-          <tr><th scope="row">Oracle</th><td>Yes, with Oracle Instant Client installed</td><td>No</td></tr>
-          <tr><th scope="row">Db2</th><td>Yes, with the IBM CLI driver installed</td><td>No</td></tr>
+        <!-- statements:start -->
+        <tr>
+          <td class="n">1</td>
+          <td class="stmt" data-label="Statement"><span class="dialect">PostgreSQL</span><code>SELECT id, total FROM orders WHERE status = &#39;open&#39;</code></td>
+          <td class="class" data-label="Read as"><span class="tag tag-read">Read</span></td>
+          <td data-label="Read-only">Runs as <code>SELECT id, total FROM orders WHERE status = &#39;open&#39; LIMIT 1000</code></td>
+          <td data-label="Writes unlocked"><span class="same">Same as read-only.</span></td>
+        </tr>
+        <tr>
+          <td class="n">2</td>
+          <td class="stmt" data-label="Statement"><span class="dialect">PostgreSQL</span><code>DELETE FROM sessions WHERE expires_at &lt; now()</code></td>
+          <td class="class" data-label="Read as"><span class="tag tag-write">Write</span></td>
+          <td data-label="Read-only">Refused: it could write.</td>
+          <td data-label="Writes unlocked">Shows the row count from <code>SELECT COUNT(*) FROM sessions WHERE expires_at &lt; now()</code> first. Above 1,000 rows, it also asks you to type the connection name.</td>
+        </tr>
+        <tr>
+          <td class="n">3</td>
+          <td class="stmt" data-label="Statement"><span class="dialect">MySQL</span><code>UPDATE accounts SET plan = &#39;free&#39;</code></td>
+          <td class="class" data-label="Read as"><span class="tag tag-write">Write</span><span class="note">no WHERE clause</span></td>
+          <td data-label="Read-only">Refused: it could write.</td>
+          <td data-label="Writes unlocked">Shows the row count from <code>SELECT COUNT(*) FROM accounts</code> first, then asks you to type the connection name, because there is no WHERE clause.</td>
+        </tr>
+        <tr>
+          <td class="n">4</td>
+          <td class="stmt" data-label="Statement"><span class="dialect">SQL Server</span><code>SELECT qty FROM stock WITH (UPDLOCK) WHERE sku = &#39;A-100&#39;</code></td>
+          <td class="class" data-label="Read as"><span class="tag tag-write">Write</span><span class="note">takes locks</span></td>
+          <td data-label="Read-only">Refused: it could write.</td>
+          <td data-label="Writes unlocked">Runs.</td>
+        </tr>
+        <tr>
+          <td class="n">5</td>
+          <td class="stmt" data-label="Statement"><span class="dialect">PostgreSQL</span><code>WITH gone AS (DELETE FROM jobs WHERE done RETURNING id) SELECT count(*) FROM gone</code></td>
+          <td class="class" data-label="Read as"><span class="tag tag-write">Write</span></td>
+          <td data-label="Read-only">Refused: it could write.</td>
+          <td data-label="Writes unlocked">Asks you to type the connection name: the rows cannot be counted first, because it changes data inside a WITH clause.</td>
+        </tr>
+        <tr>
+          <td class="n">6</td>
+          <td class="stmt" data-label="Statement"><span class="dialect">Snowflake</span><code>DROP TABLE analytics.events_2023</code></td>
+          <td class="class" data-label="Read as"><span class="tag tag-ddl">Schema change</span><span class="note">drop</span></td>
+          <td data-label="Read-only">Refused: it could write.</td>
+          <td data-label="Writes unlocked">Asks you to type the connection name.</td>
+        </tr>
+        <tr>
+          <td class="n">7</td>
+          <td class="stmt" data-label="Statement"><span class="dialect">PostgreSQL</span><code>EXPLAIN ANALYZE UPDATE users SET email = lower(email)</code></td>
+          <td class="class" data-label="Read as"><span class="tag tag-write">Write</span><span class="note">no WHERE clause</span><span class="note">runs what it explains</span></td>
+          <td data-label="Read-only">Refused: it could write.</td>
+          <td data-label="Writes unlocked">Shows the row count from <code>SELECT COUNT(*) FROM users</code> first, then asks you to type the connection name, because there is no WHERE clause.</td>
+        </tr>
+        <tr>
+          <td class="n">8</td>
+          <td class="stmt" data-label="Statement"><span class="dialect">PostgreSQL</span><code>SET default_transaction_read_only = off</code></td>
+          <td class="class" data-label="Read as"><span class="tag tag-admin">Admin</span><span class="note">turns read-only off</span></td>
+          <td data-label="Read-only">Refused: it would switch read-only off.</td>
+          <td data-label="Writes unlocked">Runs.</td>
+        </tr>
+        <tr>
+          <td class="n">9</td>
+          <td class="stmt" data-label="Statement"><span class="dialect">Oracle</span><code>SELECT name, hired FROM employees ORDER BY hired</code></td>
+          <td class="class" data-label="Read as"><span class="tag tag-read">Read</span></td>
+          <td data-label="Read-only">Runs as <code>SELECT name, hired FROM employees ORDER BY hired FETCH FIRST 1000 ROWS ONLY</code></td>
+          <td data-label="Writes unlocked"><span class="same">Same as read-only.</span></td>
+        </tr>
+        <tr>
+          <td class="n">10</td>
+          <td class="stmt" data-label="Statement"><span class="dialect">PostgreSQL</span><code>CALL archive_month(&#39;2026-10&#39;)</code></td>
+          <td class="class" data-label="Read as"><span class="tag tag-unknown">Unknown</span><span class="note">handled as a write</span></td>
+          <td data-label="Read-only">Sent to the server, whose read-only mode refuses any write.</td>
+          <td data-label="Writes unlocked">Runs.</td>
+        </tr>
+        <!-- statements:end -->
+        </tbody>
+      </table>
+    </div>
+    <p class="footnote">Generated from Treasury's own analyzer and guardrail code. A test fails when this page and the code disagree, so the table changes when the behaviour does. The default row limit is 1,000.</p>
+  </section>
+
+  <section class="wrap" id="engines" aria-labelledby="engines-title">
+    <div class="section-head">
+      <h2 id="engines-title">Where it stands</h2>
+      <p>Statement analysis already covers every SQL dialect. Drivers are written one engine at a time, and this table changes as each one lands.</p>
+    </div>
+    <div class="table-wrap">
+      <table class="status-table">
+        <thead>
+          <tr>
+            <th scope="col">Engine</th>
+            <th scope="col">Statement analysis</th>
+            <th scope="col">Driver</th>
+            <th scope="col">Will run on</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">PostgreSQL</th><td><span class="state done">Done</span></td><td><span class="state active">In progress</span></td><td>Desktop, Android, iOS</td></tr>
+          <tr><th scope="row">MySQL, MariaDB</th><td><span class="state done">Done</span></td><td><span class="state">Next</span></td><td>Desktop, Android, iOS</td></tr>
+          <tr><th scope="row">SQL Server</th><td><span class="state done">Done</span></td><td><span class="state">Next</span></td><td>Desktop, Android, iOS</td></tr>
+          <tr><th scope="row">Snowflake</th><td><span class="state done">Done</span></td><td><span class="state">Planned</span></td><td>Desktop, Android, iOS</td></tr>
+          <tr><th scope="row">Databricks SQL</th><td><span class="state done">Done</span></td><td><span class="state">Planned</span></td><td>Desktop, Android, iOS</td></tr>
+          <tr><th scope="row">Oracle</th><td><span class="state done">Done</span></td><td><span class="state">Planned</span></td><td>Desktop, with Oracle Instant Client</td></tr>
+          <tr><th scope="row">Db2</th><td><span class="state done">Done</span></td><td><span class="state">Planned</span></td><td>Desktop, with the IBM CLI driver</td></tr>
+          <tr><th scope="row">MongoDB</th><td><span class="state">Planned</span></td><td><span class="state">Planned</span></td><td>Desktop, Android, iOS</td></tr>
+          <tr><th scope="row">Redis, Valkey</th><td><span class="state">Planned</span></td><td><span class="state">Planned</span></td><td>Desktop, Android, iOS</td></tr>
+          <tr><th scope="row">Cassandra, ScyllaDB</th><td><span class="state">Planned</span></td><td><span class="state">Planned</span></td><td>Desktop, Android, iOS</td></tr>
         </tbody>
       </table>
     </div>
   </section>
 
-  <section aria-labelledby="network">
-    <h2 id="network">What goes over the network</h2>
+  <section class="wrap" id="privacy" aria-labelledby="privacy-title">
+    <div class="section-head">
+      <h2 id="privacy-title">What leaves your machine</h2>
+      <p>Very little, and nothing without a reason you can see.</p>
+    </div>
     <dl class="facts">
-      <dt>Your databases and SSH hosts</dt>
-      <dd>When you connect to them.</dd>
-      <dt>A model provider</dt>
-      <dd>Only if you set one up, only when you run a model action, and only after Treasury shows you exactly what it will send. Schema metadata by default; row values only when you tick a box for that request.</dd>
-      <dt>GitHub</dt>
-      <dd>An update check, which you can turn off on the first screen. It is the only request Treasury makes on its own.</dd>
-      <dt>Nothing else</dt>
-      <dd>No analytics, no crash reports, no remote fonts, scripts or images. This page loads nothing from other sites either.</dd>
+      <div>
+        <dt>Your databases and SSH hosts</dt>
+        <dd>Contacted when you connect. TLS is on by default and certificates are verified.</dd>
+      </div>
+      <div>
+        <dt>Passwords and keys</dt>
+        <dd>Kept in the system keychain: macOS Keychain, Windows Credential Manager, the Secret Service on Linux. Never in the settings file.</dd>
+      </div>
+      <div>
+        <dt>Query history</dt>
+        <dd>Stored on your machine and encrypted. It is searchable only while the app is open.</dd>
+      </div>
+      <div>
+        <dt>Everything else</dt>
+        <dd>No account, no analytics, no crash reports. The app's only automatic request will be an update check to GitHub, which you can turn off. This page loads nothing from other sites.</dd>
+      </div>
     </dl>
   </section>
-
-  <footer>
-    <a href="https://github.com/sepehrmohseni/treasury">Source on GitHub</a>
-    <span aria-hidden="true">·</span>
-    <span>MIT or Apache-2.0</span>
-    <span aria-hidden="true">·</span>
-    <a href="fonts/OFL.txt">IBM Plex Mono license</a>
-  </footer>
 </main>
+
+<footer class="wrap foot">
+  <div class="foot-inner">
+    <span>Treasury, MIT or Apache-2.0</span>
+    <a href="https://github.com/sepehrmohseni/treasury">Source on GitHub</a>
+    <a href="https://github.com/sepehrmohseni/treasury/commits/main">Progress</a>
+    <a href="fonts/OFL.txt">IBM Plex Mono license</a>
+  </div>
+</footer>
 </body>
 </html>

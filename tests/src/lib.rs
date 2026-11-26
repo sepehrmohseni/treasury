@@ -16,6 +16,7 @@ pub mod conformance;
 pub mod docker;
 pub mod memory;
 pub mod mock;
+pub mod site;
 
 use secrecy::SecretString;
 use std::collections::HashMap;

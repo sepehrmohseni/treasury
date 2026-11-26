@@ -11,6 +11,7 @@ publish.workspace = true
 
 [dependencies]
 treasury-core.workspace = true
+treasury-sql.workspace = true
 treasury-tunnel.workspace = true
 async-trait.workspace = true
 futures.workspace = true

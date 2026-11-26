@@ -4530,6 +4530,7 @@ dependencies = [
  "testcontainers",
  "tokio",
  "treasury-core",
+ "treasury-sql",
  "treasury-tunnel",
 ]
 
