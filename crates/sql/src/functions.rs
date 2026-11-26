@@ -14,7 +14,8 @@ pub fn effect(name: &str) -> Option<StatementClass> {
     if SIDE_EFFECT_ADMIN.contains(&name) || name.starts_with("system$") {
         return Some(StatementClass::Admin);
     }
-    if PURE.contains(&name) {
+    // Db2 monitoring table functions only read.
+    if PURE.contains(&name) || name.starts_with("mon_get_") {
         return Some(StatementClass::Read);
     }
     None
@@ -407,6 +408,19 @@ const PURE: &[&str] = &[
     "array_size",
     "explode",
     // Types and system information.
+    "varchar",
+    "integer",
+    "int",
+    "bigint",
+    "smallint",
+    "double",
+    "real",
+    "decimal",
+    "dec",
+    "float",
+    "digits",
+    "graphic",
+    "vargraphic",
     "cast",
     "try_cast",
     "safe_cast",

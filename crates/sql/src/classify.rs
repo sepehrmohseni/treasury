@@ -4,8 +4,8 @@
 use crate::dialect::Rules;
 use crate::functions;
 use sqlparser::ast::{
-    CopyTarget, Expr, FunctionArguments, ObjectName, Query, Reset, SetExpr, Statement,
-    TransactionAccessMode, TransactionMode, visit_expressions, visit_statements,
+    CopyTarget, Expr, FunctionArguments, ObjectName, Query, Reset, SetExpr, Statement, TableFactor,
+    TransactionAccessMode, TransactionMode, Visit, Visitor, visit_expressions, visit_statements,
 };
 use std::ops::ControlFlow;
 use treasury_core::analyze::{Destructive, Flags, StatementClass, TxControl};
@@ -235,7 +235,7 @@ pub fn statement(rules: &Rules, st: &Statement) -> Verdict {
         Statement::Savepoint { .. } | Statement::ReleaseSavepoint { .. } => {
             tx(TxControl::Savepoint)
         }
-        Statement::Set(set) => set_statement(set),
+        Statement::Set(set) => set_statement(rules, set),
         Statement::Reset(r) => match &r.reset {
             Reset::ALL => escape(C::Admin),
             Reset::SessionAuthorization => Verdict::of(C::Admin),
@@ -278,6 +278,13 @@ pub fn statement(rules: &Rules, st: &Statement) -> Verdict {
         | Statement::AlterPolicy(_)
         | Statement::AlterTrigger(_)
         | Statement::AlterConnector { .. } => Verdict::destructive(C::Ddl, Destructive::Alter),
+        // CREATE OR REPLACE throws away what was there.
+        Statement::CreateTable(ct) if ct.or_replace => {
+            Verdict::destructive(C::Ddl, Destructive::Drop)
+        }
+        Statement::CreateView(cv) if cv.or_replace => {
+            Verdict::destructive(C::Ddl, Destructive::Alter)
+        }
         Statement::CreateView(_)
         | Statement::CreateTable(_)
         | Statement::CreateVirtualTable { .. }
@@ -367,7 +374,7 @@ fn escape(class: StatementClass) -> Verdict {
     v
 }
 
-fn set_statement(set: &sqlparser::ast::Set) -> Verdict {
+fn set_statement(rules: &Rules, set: &sqlparser::ast::Set) -> Verdict {
     use StatementClass as C;
     use sqlparser::ast::Set as S;
     let names: Vec<(String, Option<&Expr>, bool)> = match set {
@@ -438,9 +445,15 @@ fn set_statement(set: &sqlparser::ast::Set) -> Verdict {
         } else if name.is_empty() {
             Verdict::unknown("The SET statement could not be read.")
         } else {
-            // A user variable (`SET @x = 1`) or a setting Treasury does not know.
-            let user_var = set_variable_is_user_var(set);
-            if user_var {
+            // A user variable (`SET @x = 1`), a session variable or configuration value in
+            // Snowflake and Databricks (both only last for the session), or a setting Treasury
+            // does not know.
+            let session_only = matches!(
+                rules.dialect,
+                treasury_core::driver::SqlDialect::Snowflake
+                    | treasury_core::driver::SqlDialect::Databricks
+            );
+            if session_only || set_variable_is_user_var(set) {
                 Verdict::of(C::Read)
             } else {
                 Verdict::of(C::Admin)
@@ -462,10 +475,52 @@ fn set_variable_is_user_var(set: &sqlparser::ast::Set) -> bool {
     }
 }
 
+/// T-SQL table hints that take or hold locks the way `FOR UPDATE` does.
+const LOCK_HINTS: &[&str] = &[
+    "UPDLOCK",
+    "XLOCK",
+    "TABLOCKX",
+    "HOLDLOCK",
+    "SERIALIZABLE",
+    "REPEATABLEREAD",
+];
+
+#[derive(Default)]
+struct LockHints {
+    found: bool,
+}
+
+impl Visitor for LockHints {
+    type Break = ();
+
+    fn pre_visit_table_factor(&mut self, tf: &TableFactor) -> ControlFlow<()> {
+        if let TableFactor::Table {
+            with_hints, args, ..
+        } = tf
+        {
+            let mut hints: Vec<String> = with_hints.iter().map(|h| h.to_string()).collect();
+            // The deprecated `FROM t (UPDLOCK)` form parses as table function arguments.
+            if let Some(a) = args {
+                hints.extend(a.args.iter().map(|x| x.to_string()));
+            }
+            if hints
+                .iter()
+                .any(|h| LOCK_HINTS.contains(&h.trim().to_ascii_uppercase().as_str()))
+            {
+                self.found = true;
+                return ControlFlow::Break(());
+            }
+        }
+        ControlFlow::Continue(())
+    }
+}
+
 fn query(rules: &Rules, q: &Query) -> Verdict {
     use StatementClass as C;
     let mut v = Verdict::of(C::Read);
-    if !q.locks.is_empty() {
+    let mut hints = LockHints::default();
+    let _ = q.visit(&mut hints);
+    if !q.locks.is_empty() || hints.found {
         v.class = C::Write;
         v.flags.locks = true;
     }

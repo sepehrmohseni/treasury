@@ -61,9 +61,23 @@ fn unknown(reason: &str) -> Verdict {
     }
 }
 
+/// `text` without the comments that lead it.
+fn without_leading_comments(mut text: &str) -> &str {
+    loop {
+        text = text.trim_start();
+        if let Some(rest) = text.strip_prefix("--") {
+            text = rest.split_once('\n').map_or("", |(_, after)| after);
+        } else if let Some(rest) = text.strip_prefix("/*") {
+            text = rest.split_once("*/").map_or("", |(_, after)| after);
+        } else {
+            return text;
+        }
+    }
+}
+
 /// PL/SQL units and procedural blocks are classified as a whole.
 fn block_verdict(text: &str) -> Verdict {
-    let upper: String = text
+    let upper: String = without_leading_comments(text)
         .split_whitespace()
         .take(6)
         .collect::<Vec<_>>()
