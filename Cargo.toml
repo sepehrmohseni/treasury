@@ -15,6 +15,7 @@ publish = false
 treasury-core = { path = "crates/core" }
 treasury-sql = { path = "crates/sql" }
 treasury-vault = { path = "crates/vault" }
+treasury-store = { path = "crates/store" }
 
 async-trait = "0.1.92"
 futures = { version = "0.3.34", default-features = false, features = ["std", "async-await"] }
@@ -59,3 +60,16 @@ panic = "unwind"
 
 [profile.dev]
 debug = "line-tables-only"
+
+# Key derivation and ciphers are unusably slow without optimization, even in tests.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
+[profile.dev.package.chacha20]
+opt-level = 3
+
+[profile.dev.package.poly1305]
+opt-level = 3
