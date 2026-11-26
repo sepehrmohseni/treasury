@@ -100,7 +100,9 @@ jobs:
           sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev \
             libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev libxdo-dev
-      - run: cargo xtask ci test
+      - name: cargo xtask ci test
+        shell: bash
+        run: bash scripts/ci-annotate.sh "Unit tests (${{ matrix.os }})" cargo xtask ci test
 
   integration:
     name: integration (containers)
@@ -133,7 +135,9 @@ jobs:
             docker pull -q "$image" &
           done
           wait
-      - run: cargo xtask ci integration
+      - name: cargo xtask ci integration
+        shell: bash
+        run: bash scripts/ci-annotate.sh "Container tests" cargo xtask ci integration
 
   desktop:
     name: desktop app end to end
@@ -169,10 +173,4 @@ jobs:
       # A failure is also posted as an annotation, so its cause shows on the run's page.
       - name: cargo xtask ci desktop
         shell: bash
-        run: |
-          set -o pipefail
-          if cargo xtask ci desktop 2>&1 | tee desktop.log; then exit 0; fi
-          cause="$(sed 's/\x1b\[[0-9;]*m//g' desktop.log | grep -E -m1 -A25 'panicked|^error' | head -40)"
-          cause="${cause//'%'/'%25'}"; cause="${cause//$'\r'/}"; cause="${cause//$'\n'/'%0A'}"
-          echo "::error title=Desktop end-to-end test::${cause}"
-          exit 1
+        run: bash scripts/ci-annotate.sh "Desktop end-to-end test" cargo xtask ci desktop
