@@ -106,6 +106,9 @@ pub struct Running {
     pub text: String,
     started: Instant,
     recorded: Mutex<bool>,
+    /// Whether this connection keeps history: its own setting, or else on except for
+    /// production.
+    history: bool,
     edit_target: Mutex<Option<edit::Target>>,
 }
 
@@ -503,6 +506,10 @@ impl Runtime {
                     text,
                     started: Instant::now(),
                     recorded: Mutex::new(false),
+                    history: live
+                        .config
+                        .history
+                        .unwrap_or(live.config.environment != Environment::Production),
                     edit_target: Mutex::new(None),
                 }),
             );
@@ -570,7 +577,10 @@ impl Runtime {
             return;
         }
         let mut done = r.recorded.lock().unwrap_or_else(PoisonError::into_inner);
-        if *done || self.store.setting::<bool>("history").ok().flatten() == Some(false) {
+        if *done
+            || !r.history
+            || self.store.setting::<bool>("history").ok().flatten() == Some(false)
+        {
             return;
         }
         *done = true;

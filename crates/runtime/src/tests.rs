@@ -319,3 +319,35 @@ async fn results_the_analyzer_cannot_place_say_why() {
         .unwrap_err();
     assert_eq!(err.kind, ErrorKind::Guard);
 }
+
+#[tokio::test]
+async fn production_keeps_no_history_unless_asked_to() {
+    let f = runtime();
+    let prod = open(&f.rt, Environment::Production).await;
+    run_all(&f, &prod, "rows 1").await;
+    assert!(
+        f.rt.store()
+            .history(Some(&prod.id), None, 10)
+            .unwrap()
+            .is_empty()
+    );
+
+    let mut kept = ConnectionConfig::new("audited-prod", Engine::Postgres, "mock").unwrap();
+    kept.environment = Environment::Production;
+    kept.history = Some(true);
+    f.rt.secrets_of(&kept.id)
+        .set(
+            treasury_core::config::SecretSlot::Password,
+            &secrecy::SecretString::from(PASSWORD),
+        )
+        .unwrap();
+    f.rt.connect(&kept).await.unwrap();
+    run_all(&f, &kept, "rows 1").await;
+    assert_eq!(
+        f.rt.store()
+            .history(Some(&kept.id), None, 10)
+            .unwrap()
+            .len(),
+        1
+    );
+}
