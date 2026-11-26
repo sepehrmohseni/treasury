@@ -45,10 +45,18 @@ const STEPS: &[Step] = &[
     },
     Step {
         name: "test",
-        about: "unit tests of every crate (cargo nextest)",
+        about: "unit tests of every crate (cargo nextest), without containers",
         run: test,
     },
+    Step {
+        name: "integration",
+        about: "integration and conformance tests against containers (needs Docker)",
+        run: integration,
+    },
 ];
+
+/// Tests that start containers live in modules named `docker`.
+const DOCKER_TESTS: &str = "test(/docker::/)";
 
 /// Entry point for `cargo xtask ci [--list] [STEP...]`.
 pub fn main(args: &[String]) -> Result<()> {
@@ -168,6 +176,36 @@ fn test(root: &Path) -> Result<Outcome> {
             "ci",
             "--no-tests",
             "warn",
+            "-E",
+            &format!("not {DOCKER_TESTS}"),
+        ],
+    )
+}
+
+fn docker_available() -> bool {
+    std::env::var_os("DOCKER_HOST").is_some()
+        || std::env::var_os("TREASURY_DOCKER").is_some()
+        || std::path::Path::new("/var/run/docker.sock").exists()
+}
+
+fn integration(root: &Path) -> Result<Outcome> {
+    if !run::exists("cargo-nextest", "--version") {
+        return Ok(Outcome::Skipped("cargo-nextest is not installed".into()));
+    }
+    if !docker_available() {
+        return Ok(Outcome::Skipped("Docker is not available".into()));
+    }
+    cargo(
+        root,
+        &[
+            "nextest",
+            "run",
+            "--workspace",
+            "--locked",
+            "--profile",
+            "integration",
+            "-E",
+            DOCKER_TESTS,
         ],
     )
 }
