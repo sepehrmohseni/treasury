@@ -21,6 +21,23 @@ scripts/docker-check.sh fmt        # format the checkout
 The script mounts the checkout read-only, keeps build outputs and caches in Docker volumes, and
 uses half of the CPU cores unless `TREASURY_CI_CPUS` says otherwise.
 
+## Command line
+
+`treasury` runs statements through the same guardrails as the app. It supports PostgreSQL, MySQL,
+MariaDB and SQL Server so far. Keep the password out of the connection string; it is read from
+`TREASURY_PASSWORD` (or the variable named by `--password-env`).
+
+```sh
+treasury ping  postgres://app@db.internal:5432/shop
+treasury query postgres://app@db.internal:5432/shop "SELECT * FROM orders WHERE status = 'open'"
+treasury query --write --production mysql://app@db.internal/shop "DELETE FROM carts WHERE expired"
+treasury export --format parquet --out orders.parquet postgres://app@db.internal/shop "SELECT * FROM orders"
+```
+
+Sessions are read-only unless `--write` is given. On shared databases a write first shows how
+many rows it changes; with `--production`, destructive statements, statements without `WHERE`
+and changes above 1,000 rows ask for the connection name, which can only be typed at a terminal.
+
 ## Project page
 
 The page at [sepehrmohseni.github.io/treasury](https://sepehrmohseni.github.io/treasury/) is

@@ -5,6 +5,8 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
+mod db;
+
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
@@ -96,6 +98,40 @@ enum Command {
         /// The connection string.
         uri: String,
     },
+    /// Connect and report the server and how long a round trip takes.
+    Ping {
+        #[command(flatten)]
+        conn: db::Conn,
+    },
+    /// Run one statement and print its result. Read-only unless --write is given.
+    Query {
+        #[command(flatten)]
+        conn: db::Conn,
+        /// Allow statements that write. Shared databases show the rows a change affects first.
+        #[arg(long)]
+        write: bool,
+        /// Print at most this many rows.
+        #[arg(long, default_value_t = 1000)]
+        limit: u64,
+        /// Output format.
+        #[arg(long, value_enum, default_value = "table")]
+        format: db::QueryFormat,
+        /// The statement.
+        sql: String,
+    },
+    /// Stream the result of a read into a file.
+    Export {
+        #[command(flatten)]
+        conn: db::Conn,
+        /// File format.
+        #[arg(long, value_enum)]
+        format: db::ExportFormat,
+        /// The file to write; it appears only once complete.
+        #[arg(long)]
+        out: PathBuf,
+        /// The statement.
+        sql: String,
+    },
     /// Preview the connections an import would bring over. Secrets are counted, not printed.
     Import {
         /// The client to import from; guessed from the file when left out.
@@ -150,8 +186,29 @@ fn run(cli: Cli) -> Result<String> {
             CountPlan::NotApplicable => "Not an UPDATE or DELETE.\n".into(),
         }),
         Command::ParseUri { uri } => parse_uri(&uri),
+        Command::Ping { conn } => runtime()?.block_on(db::ping(&conn)),
+        Command::Query {
+            conn,
+            write,
+            limit,
+            format,
+            sql,
+        } => runtime()?.block_on(db::query(&conn, &sql, write, limit, format)),
+        Command::Export {
+            conn,
+            format,
+            out,
+            sql,
+        } => runtime()?.block_on(db::export(&conn, &sql, &out, format)),
         Command::Import { from, path } => import(from, &path),
     }
+}
+
+fn runtime() -> Result<tokio::runtime::Runtime> {
+    Ok(tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()?)
 }
 
 fn classify(dialect: SqlDialect, script: &str, json: bool) -> String {

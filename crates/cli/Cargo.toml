@@ -1,6 +1,6 @@
 [package]
 name = "treasury-cli"
-description = "The treasury command-line tool: classify statements, parse connection strings, import"
+description = "The treasury command-line tool: query and export, classify statements, parse connection strings, import"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,12 +17,22 @@ path = "src/main.rs"
 treasury-core.workspace = true
 treasury-sql.workspace = true
 treasury-import.workspace = true
+treasury-export.workspace = true
+treasury-driver-postgres.workspace = true
+treasury-driver-mysql.workspace = true
+treasury-driver-mssql.workspace = true
 anyhow.workspace = true
+futures.workspace = true
+secrecy.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 serde_json.workspace = true
 clap = { version = "4.6.10", features = ["derive"] }
 
 [dev-dependencies]
-tempfile.workspace = true
+treasury-tests.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+testcontainers = { version = "0.28.0", default-features = false }
 
 [lints]
 workspace = true
