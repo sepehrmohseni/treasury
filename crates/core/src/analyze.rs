@@ -73,6 +73,8 @@ pub struct Flags {
     pub unfiltered: bool,
     /// EXPLAIN ANALYZE and similar: running it executes the inner statement.
     pub executes: bool,
+    /// Never allowed on production, even with writes unlocked (Redis FLUSHALL, SHUTDOWN, ...).
+    pub production_forbidden: bool,
 }
 
 /// One statement of a script and what Treasury found out about it.

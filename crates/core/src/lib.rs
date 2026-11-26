@@ -12,6 +12,7 @@ pub mod edit;
 pub mod error;
 pub mod exec;
 pub mod format;
+pub mod guard;
 pub mod health;
 pub mod plan;
 pub mod schema;
