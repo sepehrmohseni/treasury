@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["xtask"]
+members = ["crates/*", "xtask"]
 
 [workspace.package]
 version = "0.0.0"
@@ -10,6 +10,25 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/sepehrmohseni/treasury"
 homepage = "https://sepehrmohseni.github.io/treasury/"
 publish = false
+
+[workspace.dependencies]
+treasury-core = { path = "crates/core" }
+
+async-trait = "0.1.92"
+futures = { version = "0.3.34", default-features = false, features = ["std", "async-await"] }
+tokio = { version = "1.54.1", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+rmp-serde = "1.3.1"
+thiserror = "2.0.21"
+anyhow = "1.0.105"
+secrecy = "0.10.3"
+zeroize = { version = "1.9.2", features = ["derive", "std"] }
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc", "zeroize"] }
+getrandom = { version = "0.4.3", features = ["std"] }
+tempfile = "3.27.0"
+tracing = "0.1.44"
+proptest = "1.12.0"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

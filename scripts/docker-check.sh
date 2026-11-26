@@ -5,12 +5,13 @@
 #   scripts/docker-check.sh                 every check CI runs (cargo xtask ci)
 #   scripts/docker-check.sh ci fmt clippy   only the named steps; `cargo xtask ci --list` lists them
 #   scripts/docker-check.sh fmt             cargo fmt --all on the real checkout
+#   scripts/docker-check.sh lock            add new dependencies to Cargo.lock (upgrades nothing)
 #   scripts/docker-check.sh release 0.2.0   cargo xtask release on the real checkout (commits, tags)
 #   scripts/docker-check.sh shell           a shell in the prepared container
 #   scripts/docker-check.sh -- CMD          any command, for example: -- cargo test -p treasury-core
 #
 # The checkout is mounted read-only and copied inside the container, so nothing is written to it
-# (except by `fmt` and `release`, which exist to edit it). Caches live in the Docker volumes
+# (except by `fmt`, `lock` and `release`, which exist to edit it). Caches live in the Docker volumes
 # treasury-ci-cargo, treasury-ci-target and treasury-ci-pnpm; remove them with:
 #   docker volume rm treasury-ci-cargo treasury-ci-target treasury-ci-pnpm
 #
@@ -89,6 +90,12 @@ common=(--rm
 if [ "${1:-}" = fmt ]; then
   exec docker run "${common[@]}" --volume "$root:/repo:z" --workdir /repo \
     --entrypoint cargo "$image" fmt --all
+fi
+
+if [ "${1:-}" = lock ]; then
+  # `cargo metadata` records new dependencies in Cargo.lock without upgrading existing ones.
+  exec docker run "${common[@]}" --volume "$root:/repo:z" --workdir /repo \
+    --entrypoint cargo "$image" metadata --format-version 1 --quiet >/dev/null
 fi
 
 if [ "${1:-}" = release ]; then
