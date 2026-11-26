@@ -1,0 +1,19 @@
+[package]
+name = "xtask"
+description = "Build, check and release tasks for the Treasury workspace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = "1.0.105"
+semver = "1.0.28"
+serde_json = "1.0.154"
+toml_edit = "0.25.21"
+
+[lints]
+workspace = true
