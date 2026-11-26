@@ -1,0 +1,27 @@
+[package]
+name = "treasury-tests"
+description = "Cross-crate integration tests and the driver conformance suite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+treasury-core.workspace = true
+treasury-tunnel.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+secrecy.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+testcontainers = { version = "0.28.0", default-features = false }
+
+[dev-dependencies]
+russh = { version = "0.65.4", default-features = false, features = ["ring", "rsa", "flate2"] }
+rand = "0.10.4"
+
+[lints]
+workspace = true
