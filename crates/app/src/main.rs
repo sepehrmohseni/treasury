@@ -74,6 +74,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 fn main() {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(setup)
         .invoke_handler(tauri::generate_handler![
             commands::app_facts,
@@ -92,6 +93,9 @@ fn main() {
             commands::status,
             commands::cancel,
             commands::close_result,
+            commands::edit_info,
+            commands::edit_review,
+            commands::edit_apply,
             commands::export_result,
             commands::import_preview,
             commands::import_apply,
@@ -101,6 +105,8 @@ fn main() {
             commands::set_setting,
             commands::history,
             commands::host_key_answer,
+            commands::check_update,
+            commands::install_update,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {

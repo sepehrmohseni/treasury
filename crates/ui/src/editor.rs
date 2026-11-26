@@ -23,6 +23,7 @@ const HINTS: &[&str] = &[
     "Double-click a connection in the list to edit it.",
     "UPDATE and DELETE on shared databases show how many rows they change before they run.",
     "Export streams straight to the file, so results larger than memory export fine.",
+    "Double-click a cell of a one-table result to edit it. Nothing is saved until you review the statements.",
 ];
 
 pub fn dialect_of(engine: Engine) -> Option<SqlDialect> {
@@ -98,13 +99,15 @@ fn highlighted(dialect: Option<SqlDialect>, text: &str) -> AnyView {
     parts.into_iter().collect_view().into_any()
 }
 
+/// Where a run's result goes: its id, and the statement that produced it.
+#[derive(Clone, Copy)]
+pub struct Output {
+    pub result: RwSignal<Option<u64>>,
+    pub statement: RwSignal<Option<(ConnectionId, String)>>,
+}
+
 /// Starts `statement`: asks the guardrails first, then runs it or opens their dialog.
-pub fn start(
-    connection: ConnectionId,
-    statement: String,
-    result: RwSignal<Option<u64>>,
-    limit: bool,
-) {
+pub fn start(connection: ConnectionId, statement: String, out: Output, limit: bool) {
     let state = ui();
     if statement.is_empty() {
         return;
@@ -118,7 +121,7 @@ pub fn start(
         match prepared {
             Err(e) => state.notice.set(Some(e.to_string())),
             Ok(p) if p.refused.is_none() && p.count.is_none() && p.name_required.is_none() => {
-                run(connection, statement, p.token, None, result, limit).await;
+                run(connection, statement, p.token, None, out, limit).await;
             }
             Ok(p) => state.dialog.set(Dialog::Confirm {
                 connection,
@@ -134,11 +137,11 @@ async fn run(
     statement: String,
     token: u64,
     typed_name: Option<String>,
-    result: RwSignal<Option<u64>>,
+    out: Output,
     limit: bool,
 ) {
     let state = ui();
-    if let Some(old) = result.get_untracked() {
+    if let Some(old) = out.result.get_untracked() {
         let _ = ipc::call::<_, ()>("close_result", &serde_json::json!({ "result": old })).await;
     }
     match ipc::call::<_, u64>(
@@ -151,8 +154,8 @@ async fn run(
     .await
     {
         Ok(rid) => {
-            state.notice.set(None);
-            result.set(Some(rid));
+            out.statement.set(Some((connection, statement)));
+            out.result.set(Some(rid));
         }
         Err(e) => state.notice.set(Some(e.to_string())),
     }
@@ -189,6 +192,11 @@ pub fn Workspace() -> impl IntoView {
         }
     };
 
+    // The statement whose result is shown, to run again after its rows were edited.
+    let out = Output {
+        result,
+        statement: RwSignal::new(None),
+    };
     let run_current = move || {
         let (Some(id), Some(el)) = (state.active.get_untracked(), area.get_untracked()) else {
             return;
@@ -202,8 +210,19 @@ pub fn Workspace() -> impl IntoView {
             byte_offset(&value, s),
             byte_offset(&value, e),
         );
-        start(id, statement, result, limit.get_untracked());
+        // A new run clears old messages; the run after saved edits keeps "Saved".
+        state.notice.set(None);
+        start(id, statement, out, limit.get_untracked());
     };
+
+    // Saved grid edits: run the statement again to show the rows as they are now.
+    let rerun = Callback::new(move |()| {
+        if let Some((id, statement)) = out.statement.get_untracked()
+            && state.active.get_untracked().as_ref() == Some(&id)
+        {
+            start(id, statement, out, limit.get_untracked());
+        }
+    });
 
     // A statement the guardrail dialog approved.
     Effect::new(move |_| {
@@ -215,8 +234,9 @@ pub fn Workspace() -> impl IntoView {
         }) = state.approved.get()
         {
             state.approved.set(None);
+            state.notice.set(None);
             let l = limit.get_untracked();
-            leptos::task::spawn_local(run(connection, statement, token, typed_name, result, l));
+            leptos::task::spawn_local(run(connection, statement, token, typed_name, out, l));
         }
     });
 
@@ -288,7 +308,7 @@ pub fn Workspace() -> impl IntoView {
                         <span>{move || HINTS[hint.get()]}</span>
                         <span class="push">
                             <button class="btn small" on:click=move |_| hint.update(|h| *h = (*h + 1) % HINTS.len())>"Next tip"</button>
-                            <button class="btn small" on:click=move |_| {
+                            <button class="btn small no-tips" on:click=move |_| {
                                 state.hints.set(false);
                                 set_setting("hints", serde_json::Value::Bool(false));
                             }>"Don't show tips"</button>
@@ -313,7 +333,7 @@ pub fn Workspace() -> impl IntoView {
                     }
                 ></textarea>
             </div>
-            <Results result=result />
+            <Results result=result on_saved=rerun />
         </main>
     }
 }

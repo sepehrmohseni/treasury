@@ -7,7 +7,7 @@ use crate::ipc;
 use crate::sidebar::Sidebar;
 use crate::state::{Dialog, ui};
 use leptos::prelude::*;
-use treasury_ipc::{AppFacts, HostKeyQuestion};
+use treasury_ipc::{AppFacts, HostKeyQuestion, UpdateView};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -27,6 +27,19 @@ pub fn App() -> impl IntoView {
         }
         if let Some(v) = get("tutorial_done").await.and_then(|v| v.as_bool()) {
             state.tutorial_done.set(v);
+        }
+        if let Some(v) = get("theme")
+            .await
+            .and_then(|v| v.as_str().map(str::to_owned))
+        {
+            crate::dialogs::apply_theme(&v);
+        }
+        // The one request Treasury makes on its own, unless it is turned off in Settings. A
+        // failed check (offline, say) is not worth interrupting anyone for.
+        if get("update_check").await.and_then(|v| v.as_bool()) != Some(false)
+            && let Ok(found) = ipc::call0::<Option<UpdateView>>("check_update").await
+        {
+            state.update.set(found);
         }
     });
     state.reload_connections();
@@ -72,6 +85,24 @@ fn StatusBar() -> impl IntoView {
             <span class="push">
                 {move || state.notice.get().unwrap_or_default()}
             </span>
+            {move || state.update.get().map(|u| {
+                let version = u.version.clone();
+                let install = move |_| {
+                    state.notice.set(Some(format!("Downloading Treasury {version}…")));
+                    leptos::task::spawn_local(async move {
+                        if let Err(e) = ipc::call0::<()>("install_update").await {
+                            state.notice.set(Some(e.to_string()));
+                        }
+                    });
+                };
+                view! {
+                    <span class="update" title=u.notes.clone().unwrap_or_default()>
+                        {format!("Treasury {} is available", u.version)}
+                        <button class="btn small primary" on:click=install>"Install and restart"</button>
+                        <button class="btn small" on:click=move |_| state.update.set(None)>"Not now"</button>
+                    </span>
+                }
+            })}
             {move || state.facts.get().filter(|f| f.secrets_in_memory).map(|_| view! {
                 <span title="No system keychain was found">"Passwords are kept only until Treasury quits"</span>
             })}

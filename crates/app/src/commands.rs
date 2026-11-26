@@ -11,8 +11,8 @@ use treasury_core::format::{FormatOptions, display};
 use treasury_core::schema::{ChildPage, ChildQuery, ObjectDetails, ObjectPath};
 use treasury_core::{Error, Result};
 use treasury_ipc::{
-    AppFacts, ConnectionView, ExportFormat, ExportView, ImportItem, ImportPreview, LiveView,
-    Prepared, SecretInput, WindowView,
+    AppFacts, ConnectionView, EditInfo, ExportFormat, ExportView, ImportItem, ImportPreview,
+    LiveView, Prepared, RowEdits, SecretInput, UpdateView, WindowView,
 };
 use treasury_store::HistoryEntry;
 
@@ -218,6 +218,31 @@ pub fn close_result(state: State<'_, AppState>, result: u64) {
 }
 
 #[tauri::command]
+pub async fn edit_info(state: State<'_, AppState>, result: u64, set: usize) -> Result<EditInfo> {
+    state.runtime.edit_info(result, set).await
+}
+
+#[tauri::command]
+pub async fn edit_review(
+    state: State<'_, AppState>,
+    result: u64,
+    set: usize,
+    edits: RowEdits,
+) -> Result<Vec<String>> {
+    state.runtime.edit_review(result, set, &edits).await
+}
+
+#[tauri::command]
+pub async fn edit_apply(
+    state: State<'_, AppState>,
+    result: u64,
+    set: usize,
+    edits: RowEdits,
+) -> Result<u64> {
+    state.runtime.edit_apply(result, set, &edits).await
+}
+
+#[tauri::command]
 pub async fn export_result(
     state: State<'_, AppState>,
     result: u64,
@@ -381,4 +406,51 @@ pub fn history(
 #[tauri::command]
 pub fn host_key_answer(state: State<'_, AppState>, question: u64, accept: bool) {
     state.prompt.answer(question, accept);
+}
+
+fn update_error(e: tauri_plugin_updater::Error) -> Error {
+    Error::new(
+        treasury_core::ErrorKind::Protocol,
+        format!("Treasury could not update itself: {e}"),
+    )
+}
+
+/// The updater, pointed at the release feed. Debug builds take `TREASURY_UPDATE_URL` instead,
+/// so the desktop test can serve its own feed; packages are still checked against the public
+/// key built into the app.
+fn updater(app: &tauri::AppHandle) -> Result<tauri_plugin_updater::Updater> {
+    use tauri_plugin_updater::UpdaterExt;
+    #[allow(unused_mut, reason = "only debug builds change the endpoint")]
+    let mut builder = app.updater_builder();
+    #[cfg(debug_assertions)]
+    if let Some(url) = std::env::var("TREASURY_UPDATE_URL")
+        .ok()
+        .and_then(|u| u.parse().ok())
+    {
+        builder = builder.endpoints(vec![url]).map_err(update_error)?;
+    }
+    builder.build().map_err(update_error)
+}
+
+/// A newer release, if there is one.
+#[tauri::command]
+pub async fn check_update(app: tauri::AppHandle) -> Result<Option<UpdateView>> {
+    let update = updater(&app)?.check().await.map_err(update_error)?;
+    Ok(update.map(|u| UpdateView {
+        version: u.version.clone(),
+        notes: u.body.clone(),
+    }))
+}
+
+/// Downloads the newer release, checks its signature, installs it and restarts.
+#[tauri::command]
+pub async fn install_update(app: tauri::AppHandle) -> Result<()> {
+    let Some(update) = updater(&app)?.check().await.map_err(update_error)? else {
+        return Ok(());
+    };
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(update_error)?;
+    app.restart()
 }

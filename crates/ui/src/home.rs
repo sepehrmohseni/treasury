@@ -12,7 +12,7 @@ const STEPS: &[&str] = &[
     "Open it from the list on the left. Production connections open read-only and are marked in red.",
     "Write a statement and press Ctrl+Enter to run the one under the cursor. Plain SELECTs get a 1,000-row limit.",
     "Before an UPDATE or DELETE runs on a shared database, Treasury shows how many rows it changes.",
-    "Export any result to CSV, JSON or Parquet from the bar under the grid.",
+    "Export a result from the bar under the grid, or double-click a cell of a one-table result to edit it.",
 ];
 
 pub fn set_setting(key: &'static str, value: serde_json::Value) {
@@ -41,7 +41,7 @@ pub fn Home() -> impl IntoView {
                     <section class="tour" aria-labelledby="tour-title">
                         <strong id="tour-title">"Your first five minutes"</strong>
                         <ol>{STEPS.iter().map(|s| view! { <li>{*s}</li> }).collect_view()}</ol>
-                        <button class="btn small" on:click=move |_| {
+                        <button class="btn small hide-tour" on:click=move |_| {
                             state.tutorial_done.set(true);
                             set_setting("tutorial_done", serde_json::Value::Bool(true));
                         }>"Got it, hide this"</button>

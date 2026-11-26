@@ -37,6 +37,9 @@ tracing.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 tauri = { version = "2.12.7", features = [] }
 tauri-plugin-dialog = "2.8.4"
+# Checks GitHub for a newer release and installs it; packages are verified against the public
+# key in tauri.conf.json. TLS is rustls with ring, like the rest of the app.
+tauri-plugin-updater = "2.14.1"
 
 [lints]
 workspace = true

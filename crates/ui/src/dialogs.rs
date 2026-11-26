@@ -1,10 +1,11 @@
-//! The dialogs: connection form, import, guardrail confirmation, SSH host key.
+//! The dialogs: connection form, import, guardrail confirmation, reviewing grid edits, SSH host
+//! key.
 
 use crate::ipc;
 use crate::state::{Approved, Dialog, ui};
 use leptos::prelude::*;
 use treasury_core::config::{ConnectionConfig, Endpoint, Engine, Environment, SecretSlot, TlsMode};
-use treasury_ipc::{ImportPreview, LiveView, Prepared, SecretInput};
+use treasury_ipc::{ImportPreview, LiveView, Prepared, RowEdits, SecretInput};
 
 /// The engines this version connects to.
 const ENGINES: [Engine; 5] = [
@@ -34,6 +35,16 @@ pub fn Dialogs() -> impl IntoView {
             prepared,
         } => view! {
             <ConfirmDialog connection=connection statement=statement prepared=prepared />
+        }
+        .into_any(),
+        Dialog::Settings => view! { <SettingsDialog /> }.into_any(),
+        Dialog::ReviewEdits {
+            result,
+            set,
+            statements,
+            edits,
+        } => view! {
+            <ReviewDialog result=result set=set statements=statements edits=edits />
         }
         .into_any(),
         Dialog::HostKey(q) => {
@@ -460,6 +471,187 @@ fn ConfirmDialog(
                     } else {
                         view! { <button class="btn primary" class:danger=needs_name on:click=go disabled=move || !ready()>"Run it"</button> }.into_any()
                     }}
+                </footer>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn ReviewDialog(
+    result: u64,
+    set: usize,
+    statements: Vec<String>,
+    edits: RowEdits,
+) -> impl IntoView {
+    let state = ui();
+    let error = RwSignal::new(None::<String>);
+    let saving = RwSignal::new(false);
+    let save = move |_| {
+        let edits = edits.clone();
+        saving.set(true);
+        leptos::task::spawn_local(async move {
+            match ipc::call::<_, u64>(
+                "edit_apply",
+                &serde_json::json!({ "result": result, "set": set, "edits": edits }),
+            )
+            .await
+            {
+                Ok(n) => {
+                    state.notice.set(Some(match n {
+                        1 => "Saved. 1 row changed.".to_owned(),
+                        n => format!("Saved. {} rows changed.", crate::grid::thousands(n)),
+                    }));
+                    state.saved.set(Some(result));
+                    close();
+                }
+                Err(e) => {
+                    saving.set(false);
+                    error.set(Some(e.to_string()));
+                }
+            }
+        });
+    };
+    view! {
+        <div class="backdrop">
+            <div class="dialog wide" role="dialog" aria-modal="true" aria-labelledby="rv-title">
+                <header id="rv-title">"Review changes"</header>
+                <div class="body">
+                    <p class="detail">{format!(
+                        "{} run in one transaction: all of them are saved, or none.",
+                        if statements.len() == 1 { "This statement will".to_owned() } else { format!("These {} statements will", statements.len()) }
+                    )}</p>
+                    <pre class="statements">{statements.join("\n")}</pre>
+                    {move || error.get().map(|e| view! { <div class="note danger" role="alert">{e}</div> })}
+                </div>
+                <footer>
+                    <button class="btn" on:click=move |_| close()>"Keep editing"</button>
+                    <button class="btn primary" on:click=save disabled=move || saving.get()>"Save changes"</button>
+                </footer>
+            </div>
+        </div>
+    }
+}
+
+/// Shows the window in `theme` ("light", "dark"), or as the system does for anything else.
+pub fn apply_theme(theme: &str) {
+    if let Some(root) = document().document_element() {
+        let _ = match theme {
+            "light" | "dark" => root.set_attribute("data-theme", theme),
+            _ => root.remove_attribute("data-theme"),
+        };
+    }
+}
+
+/// The row limit a plain SELECT gets unless "Limit" is unticked.
+const DEFAULT_ROW_LIMIT: u64 = 1_000;
+
+#[component]
+fn SettingsDialog() -> impl IntoView {
+    let state = ui();
+    let theme = RwSignal::new("system".to_owned());
+    let row_limit = RwSignal::new(DEFAULT_ROW_LIMIT.to_string());
+    let history = RwSignal::new(true);
+    let update_check = RwSignal::new(true);
+    let error = RwSignal::new(None::<String>);
+    leptos::task::spawn_local(async move {
+        let get = |key: &'static str| async move {
+            ipc::call::<_, Option<serde_json::Value>>("setting", &serde_json::json!({ "key": key }))
+                .await
+                .ok()
+                .flatten()
+        };
+        if let Some(v) = get("theme")
+            .await
+            .and_then(|v| v.as_str().map(str::to_owned))
+        {
+            theme.set(v);
+        }
+        if let Some(v) = get("row_limit").await.and_then(|v| v.as_u64()) {
+            row_limit.set(v.to_string());
+        }
+        if let Some(v) = get("history").await.and_then(|v| v.as_bool()) {
+            history.set(v);
+        }
+        if let Some(v) = get("update_check").await.and_then(|v| v.as_bool()) {
+            update_check.set(v);
+        }
+    });
+    let save = move |_| {
+        let limit = match row_limit.get_untracked().trim().parse::<u64>() {
+            Ok(n) if (1..=1_000_000).contains(&n) => n,
+            _ => {
+                error.set(Some(
+                    "The row limit is a whole number from 1 to 1,000,000.".into(),
+                ));
+                return;
+            }
+        };
+        let theme = theme.get_untracked();
+        apply_theme(&theme);
+        crate::home::set_setting("theme", serde_json::Value::String(theme));
+        crate::home::set_setting("row_limit", serde_json::Value::from(limit));
+        crate::home::set_setting("history", serde_json::Value::Bool(history.get_untracked()));
+        crate::home::set_setting(
+            "hints",
+            serde_json::Value::Bool(state.hints.get_untracked()),
+        );
+        crate::home::set_setting(
+            "update_check",
+            serde_json::Value::Bool(update_check.get_untracked()),
+        );
+        close();
+    };
+    let walkthrough = move |_| {
+        state.tutorial_done.set(false);
+        crate::home::set_setting("tutorial_done", serde_json::Value::Bool(false));
+        state.active.set(None);
+        close();
+    };
+    view! {
+        <div class="backdrop">
+            <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="st-title">
+                <header id="st-title">"Settings"</header>
+                <div class="body">
+                    <div class="field">
+                        <label for="st-theme">"Theme"</label>
+                        <select id="st-theme" on:change=move |ev| theme.set(event_target_value(&ev))>
+                            {[("system", "Same as the system"), ("light", "Light"), ("dark", "Dark")]
+                                .into_iter()
+                                .map(|(v, l)| view! { <option value=v selected=move || theme.with(|t| t == v)>{l}</option> })
+                                .collect_view()}
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="st-limit">"Row limit"</label>
+                        <input id="st-limit" type="number" min="1" max="1000000"
+                            prop:value=move || row_limit.get() on:input=move |ev| row_limit.set(event_target_value(&ev)) />
+                    </div>
+                    <div class="field">
+                        <span></span>
+                        <label><input type="checkbox" prop:checked=move || history.get()
+                            on:change=move |ev| history.set(event_target_checked(&ev)) />" Keep a history of statements run"</label>
+                    </div>
+                    <div class="field">
+                        <span></span>
+                        <label><input type="checkbox" prop:checked=move || state.hints.get()
+                            on:change=move |ev| state.hints.set(event_target_checked(&ev)) />" Show tips"</label>
+                    </div>
+                    <div class="field">
+                        <span></span>
+                        <label><input type="checkbox" prop:checked=move || update_check.get()
+                            on:change=move |ev| update_check.set(event_target_checked(&ev)) />" Check for a new version when Treasury starts"</label>
+                    </div>
+                    <div class="field">
+                        <span></span>
+                        <span><button class="btn small walkthrough" on:click=walkthrough>"Show the walkthrough again"</button></span>
+                    </div>
+                    <p class="detail">"History stays on this computer, encrypted, and production connections keep none. The version check asks GitHub which release is the latest; it carries nothing about your databases."</p>
+                    {move || error.get().map(|e| view! { <div class="note danger" role="alert">{e}</div> })}
+                </div>
+                <footer>
+                    <button class="btn" on:click=move |_| close()>"Cancel"</button>
+                    <button class="btn primary" on:click=save>"Save"</button>
                 </footer>
             </div>
         </div>

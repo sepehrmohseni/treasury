@@ -186,6 +186,18 @@ impl Session {
         }
     }
 
+    /// Waits up to `secs` until `script` returns true.
+    pub fn wait_script(&self, script: &str, secs: u64) {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        while self.script(script) != Value::Bool(true) {
+            assert!(
+                Instant::now() < deadline,
+                "`{script}` stayed false for {secs}s"
+            );
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    }
+
     /// Clicks `e`.
     pub fn click(&self, e: &Element) {
         let reply = self.post(&format!("/element/{}/click", e.0), &json!({}));
@@ -224,6 +236,15 @@ impl Session {
     /// Runs `script` in the window and returns its result.
     pub fn script(&self, script: &str) -> Value {
         self.post("/execute/sync", &json!({ "script": script, "args": [] }))["value"].clone()
+    }
+
+    /// Runs `script` in the window with `e` as `arguments[0]`.
+    pub fn script_on(&self, e: &Element, script: &str) -> Value {
+        self.post(
+            "/execute/sync",
+            &json!({ "script": script, "args": [{ ELEMENT: e.0 }] }),
+        )["value"]
+            .clone()
     }
 
     /// Everything the window shows as text, for failure messages.

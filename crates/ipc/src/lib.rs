@@ -203,3 +203,12 @@ pub struct EditInfo {
     /// Why the rows cannot be edited, when they cannot.
     pub reason: Option<String>,
 }
+
+/// A newer release than the one running.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateView {
+    /// Its version.
+    pub version: String,
+    /// What changed, as the release notes say.
+    pub notes: Option<String>,
+}

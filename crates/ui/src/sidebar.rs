@@ -85,7 +85,10 @@ pub fn Sidebar() -> impl IntoView {
     let state = ui();
     view! {
         <aside class="sidebar" aria-label="Connections">
-            <div class="brand"><img src="icon.svg" alt="" />"Treasury"</div>
+            <div class="brand">
+                <img src="icon.svg" alt="" />"Treasury"
+                <button class="btn small push settings" on:click=move |_| state.dialog.set(Dialog::Settings)>"Settings"</button>
+            </div>
             <div class="side-actions">
                 <button class="btn small primary" on:click=move |_| add_connection()>"Add"</button>
                 <button class="btn small" on:click=move |_| import_connections()>"Import"</button>

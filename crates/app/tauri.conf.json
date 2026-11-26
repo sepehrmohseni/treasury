@@ -24,13 +24,22 @@
       "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxNzhCOUY2NkY2NDU5NkMKUldSc1dXUnY5cmw0NFoxMGhjczZJN3pUOXdTRGd3NkFEYmR2R01wVTYreW9zSG5uQk90RXNqVHkK",
+      "endpoints": ["https://github.com/sepehrmohseni/treasury/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "category": "DeveloperTool",
     "shortDescription": "A database client that reads your SQL before the server does",
     "copyright": "The Treasury Authors",
     "licenseFile": "../../LICENSE-MIT",
+    "macOS": { "signingIdentity": "-", "minimumSystemVersion": "11.0" },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
