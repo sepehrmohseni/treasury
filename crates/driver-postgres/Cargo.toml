@@ -1,0 +1,29 @@
+[package]
+name = "treasury-driver-postgres"
+description = "PostgreSQL driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+treasury-core.workspace = true
+treasury-sql.workspace = true
+treasury-tunnel.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+secrecy.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["net", "sync", "time", "rt", "macros"] }
+tokio-postgres = { version = "0.7.18", default-features = false, features = ["runtime"] }
+postgres-types = "0.2.14"
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+bytes = "1.12.2"
+
+[lints]
+workspace = true

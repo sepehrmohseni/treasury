@@ -12,3 +12,4 @@ as superseded and link the one that replaces it.
 | [0004](0004-history-encryption-and-search.md) | Query text is sealed at rest; history search indexes in memory |
 | [0005](0005-limit-rewrite-verified-by-reparse.md) | The row limit is inserted into the user's text and verified by parsing again |
 | [0006](0006-secret-stores.md) | Secret stores through keyring-core, with a sealed file as the fallback |
+| [0007](0007-postgres-results-through-the-simple-protocol.md) | PostgreSQL results stream through the simple protocol, after a prepare |
