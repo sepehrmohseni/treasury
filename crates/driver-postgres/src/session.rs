@@ -215,7 +215,17 @@ struct Events {
     pending: VecDeque<Result<ExecEvent>>,
     timed_out: Arc<AtomicBool>,
     limit: Option<Duration>,
+    /// The time-limit timer; stopped when the statement ends so it cannot cancel a later one.
+    timer: Option<tokio::task::AbortHandle>,
     done: bool,
+}
+
+impl Drop for Events {
+    fn drop(&mut self) {
+        if let Some(t) = self.timer.take() {
+            t.abort();
+        }
+    }
 }
 
 impl Stream for Events {
@@ -239,6 +249,9 @@ impl Stream for Events {
             Poll::Pending => Poll::Pending,
             Poll::Ready(None) => {
                 this.done = true;
+                if let Some(t) = this.timer.take() {
+                    t.abort();
+                }
                 self.poll_next(cx)
             }
             Poll::Ready(Some(item)) => {
@@ -400,21 +413,31 @@ impl Execute for PgSession {
             }
             Err(e) => return Err(self.map(&e)),
         };
-        if let Some(limit) = req.timeout {
+        self.timed_out.store(false, Ordering::SeqCst);
+        let timer = req.timeout.map(|limit| {
             let token = self.cancel_token.clone();
             let tls = self.tls.clone();
             let flag = self.timed_out.clone();
-            self.timed_out.store(false, Ordering::SeqCst);
             tokio::spawn(async move {
                 tokio::time::sleep(limit).await;
                 flag.store(true, Ordering::SeqCst);
                 let _ = token.cancel_query(tls).await;
-            });
-        }
-        let inner: ExecStream = if req.params.is_empty() {
-            self.simple(&req, &prepared).await?
+            })
+            .abort_handle()
+        });
+        let started = if req.params.is_empty() {
+            self.simple(&req, &prepared).await
         } else {
-            self.extended(&req, prepared).await?
+            self.extended(&req, prepared).await
+        };
+        let inner: ExecStream = match started {
+            Ok(s) => s,
+            Err(e) => {
+                if let Some(t) = timer {
+                    t.abort();
+                }
+                return Err(e);
+            }
         };
         Ok(Box::pin(Events {
             inner,
@@ -422,6 +445,7 @@ impl Execute for PgSession {
             pending: VecDeque::new(),
             timed_out: self.timed_out.clone(),
             limit: req.timeout,
+            timer,
             done: false,
         }))
     }

@@ -347,6 +347,7 @@ mod docker {
         edits_are_atomic(s.as_ref()).await;
         edits_join_an_open_transaction(&pg).await;
         plans_are_trees(s.as_ref()).await;
+        a_finished_statement_leaves_no_timer(s.as_ref()).await;
         metrics_load(&pg, s.as_ref()).await;
     }
 
@@ -684,6 +685,20 @@ mod docker {
             vec![vec![Value::Text("uno".into())]],
             "rolling back the user's transaction must undo the edit"
         );
+    }
+
+    /// The time limit of a statement that finished must not cancel the next one.
+    async fn a_finished_statement_leaves_no_timer(s: &dyn Session) {
+        run_req(
+            s,
+            ExecRequest::new("SELECT 1").with_timeout(Duration::from_millis(500)),
+        )
+        .await
+        .unwrap();
+        let (rows, _) = run_req(s, ExecRequest::new("SELECT pg_sleep(1.5), 7"))
+            .await
+            .unwrap();
+        assert_eq!(rows[0][1], Value::I64(7));
     }
 
     async fn plans_are_trees(s: &dyn Session) {
