@@ -27,7 +27,7 @@ mod docker {
     use treasury_tests::conformance::{Fixture, TypeCases, assert_all};
     use treasury_tests::docker::with_startup;
 
-    /// The version CI tests; the nightly run adds the oldest supported one.
+    /// The version CI tests; the nightly run sets TREASURY_POSTGRES_TAG to the oldest supported one.
     const IMAGE_TAG: &str = "19.0-alpine";
     const PASSWORD: &str = "conformance-password";
 

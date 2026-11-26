@@ -1,0 +1,43 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  # CI tests the newest server of each engine; this runs the same container tests against the
+  # oldest versions Treasury supports.
+  oldest-servers:
+    name: integration (oldest supported servers)
+    runs-on: ubuntu-24.04
+    env:
+      TREASURY_POSTGRES_TAG: 15.20-alpine
+      TREASURY_MYSQL_TAG: 8.4.10
+      TREASURY_MARIADB_TAG: 11.8.6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: "1.100.0"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
+        with:
+          tool: cargo-nextest@0.9.152
+      - name: Pull test images
+        run: |
+          for image in "postgres:$TREASURY_POSTGRES_TAG" "mysql:$TREASURY_MYSQL_TAG" \
+            "mariadb:$TREASURY_MARIADB_TAG" mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04; do
+            docker pull -q "$image" &
+          done
+          wait
+      - run: cargo xtask ci integration
