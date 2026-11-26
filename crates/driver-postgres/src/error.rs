@@ -40,6 +40,9 @@ pub fn map(e: &tokio_postgres::Error, host: &str, port: u16) -> Error {
     }
     let source = std::error::Error::source(e).and_then(|s| s.downcast_ref::<std::io::Error>());
     if let Some(io) = source {
+        if let Some(tls) = io.get_ref().and_then(|i| i.downcast_ref::<rustls::Error>()) {
+            return tls_error(tls, host, port);
+        }
         return Error::network(host, port, io);
     }
     let text = e.to_string();
@@ -64,6 +67,19 @@ pub fn map(e: &tokio_postgres::Error, host: &str, port: u16) -> Error {
         );
     }
     Error::protocol(text)
+}
+
+/// A TLS failure, worded for what the user can change.
+pub(crate) fn tls_error(e: &rustls::Error, host: &str, port: u16) -> Error {
+    let text = match e {
+        rustls::Error::InvalidCertificate(why) => format!(
+            "The certificate of {host}:{port} is not trusted ({why:?}). Add the CA that issued \
+             it in the TLS settings, check the server name, or turn on \"Accept invalid \
+             certificates\" for this connection."
+        ),
+        other => format!("The TLS handshake with {host}:{port} failed: {other}."),
+    };
+    Error::new(ErrorKind::Tls, text)
 }
 
 fn kind_for(code: &SqlState, message: &str) -> ErrorKind {

@@ -4964,11 +4964,20 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "futures",
+ "secrecy",
  "serde_json",
  "tempfile",
+ "testcontainers",
+ "tokio",
  "treasury-core",
+ "treasury-driver-mssql",
+ "treasury-driver-mysql",
+ "treasury-driver-postgres",
+ "treasury-export",
  "treasury-import",
  "treasury-sql",
+ "treasury-tests",
 ]
 
 [[package]]
@@ -5114,6 +5123,7 @@ dependencies = [
  "async-trait",
  "futures",
  "rand",
+ "rcgen",
  "russh",
  "secrecy",
  "tempfile",

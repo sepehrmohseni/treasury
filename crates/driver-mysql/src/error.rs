@@ -31,7 +31,12 @@ pub(crate) fn map(e: &mysql_async::Error, host: &str, port: u16, sql: Option<&st
             };
             Error::new(kind, text).with_server(server)
         }
-        E::Io(IoError::Io(io)) => Error::network(host, port, io),
+        E::Io(IoError::Io(io)) => {
+            match io.get_ref().and_then(|i| i.downcast_ref::<rustls::Error>()) {
+                Some(tls) => tls_error(tls, host, port),
+                None => Error::network(host, port, io),
+            }
+        }
         E::Io(IoError::Tls(t)) => Error::new(
             ErrorKind::Tls,
             format!("The TLS connection to {host}:{port} failed: {t}."),
@@ -49,6 +54,19 @@ pub(crate) fn map(e: &mysql_async::Error, host: &str, port: u16, sql: Option<&st
         ),
         other => Error::protocol(other.to_string()),
     }
+}
+
+/// A TLS failure, worded for what the user can change.
+fn tls_error(e: &rustls::Error, host: &str, port: u16) -> Error {
+    let text = match e {
+        rustls::Error::InvalidCertificate(why) => format!(
+            "The certificate of {host}:{port} is not trusted ({why:?}). Add the CA that issued \
+             it in the TLS settings, check the server name, or turn on \"Accept invalid \
+             certificates\" for this connection."
+        ),
+        other => format!("The TLS handshake with {host}:{port} failed: {other}."),
+    };
+    Error::new(ErrorKind::Tls, text)
 }
 
 fn kind_for(code: u16, host: &str, port: u16) -> ErrorKind {
