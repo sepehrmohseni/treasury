@@ -572,43 +572,30 @@ impl Store {
 
     /// The open tabs, in order.
     pub fn tabs(&self) -> Result<Vec<TabState>> {
-        let rows: Vec<(
-            String,
-            i64,
-            Option<String>,
-            String,
-            Vec<u8>,
-            i64,
-            Option<String>,
-        )> = {
+        // Rows with their sealed text, decrypted after the connection lock is released.
+        let rows: Vec<(TabState, Vec<u8>)> = {
             let conn = self.lock();
             let mut st = conn.prepare(
                 "SELECT id, position, connection_id, title, text, cursor, saved_query FROM tabs ORDER BY position",
             )?;
             let mapped = st.query_map([], |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                    r.get(6)?,
-                ))
+                let tab = TabState {
+                    id: r.get(0)?,
+                    position: r.get(1)?,
+                    connection: r.get::<_, Option<String>>(2)?.map(ConnectionId),
+                    title: r.get(3)?,
+                    text: String::new(),
+                    cursor: r.get(5)?,
+                    saved_query: r.get(6)?,
+                };
+                Ok((tab, r.get(4)?))
             })?;
             mapped.collect::<std::result::Result<_, _>>()?
         };
         rows.into_iter()
-            .map(|(id, position, c, title, blob, cursor, saved)| {
-                Ok(TabState {
-                    id,
-                    position,
-                    connection: c.map(ConnectionId),
-                    title,
-                    text: self.open_text(TAB_CTX, &blob)?,
-                    cursor,
-                    saved_query: saved,
-                })
+            .map(|(mut tab, blob)| {
+                tab.text = self.open_text(TAB_CTX, &blob)?;
+                Ok(tab)
             })
             .collect()
     }

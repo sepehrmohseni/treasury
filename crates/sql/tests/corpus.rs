@@ -3,6 +3,8 @@
 //! hold: no statement that may write is ever classified as a read, and every statement gets
 //! exactly its label.
 
+#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
+
 use proptest::prelude::*;
 use treasury_core::analyze::{Analyzer, StatementClass, script_class};
 use treasury_core::driver::SqlDialect;
