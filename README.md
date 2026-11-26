@@ -1,10 +1,29 @@
 # Treasury
 
-Treasury is an open-source desktop and mobile client for PostgreSQL, MySQL, MariaDB, SQL Server,
-MongoDB, Redis, Valkey, Cassandra, ScyllaDB, Snowflake, Databricks SQL, Oracle, and IBM Db2.
+Treasury is an open-source database client for PostgreSQL, MySQL, MariaDB, SQL Server and
+MongoDB, with a desktop app and a command line tool. It reads each statement before the server
+does: it knows which ones write, shows how many rows an UPDATE or DELETE would change, and keeps
+production connections read-only until you unlock them.
 
-It has no account, no paid tier, and no telemetry. It is in early development and has no release
-yet.
+It has no account, no paid tier and no telemetry. It is in early development and has no release
+yet. What comes after the first release is in the [roadmap](docs/roadmap.md).
+
+## Desktop app
+
+- Add connections by hand, from a connection string, or by importing the export files of other
+  clients. Passwords go to the system keychain, never to a settings file.
+- Browse databases, schemas, tables and collections in a tree that loads as you open it.
+- Write statements in an editor that highlights them, and run the one under the cursor with
+  Ctrl+Enter. Plain SELECTs get a 1,000-row limit unless you turn it off.
+- Read results in a grid that only fetches the rows in view, so large results stay fast.
+- Edit the rows of a SQL result that comes from one table. Changes collect in the grid, and
+  nothing is saved until you have read the statements they become; they are saved in one
+  transaction.
+- Export a result to CSV, JSON, NDJSON or Parquet. Export streams to the file.
+- Connect through SSH tunnels, and decide about each new SSH host key yourself.
+
+The app is a [Tauri](https://tauri.app) window around the Rust core; its interface is written in
+Rust too ([ADR 0011](docs/decisions/0011-ui-in-rust-with-leptos.md)).
 
 ## Building and checking
 
@@ -20,6 +39,11 @@ scripts/docker-check.sh fmt        # format the checkout
 
 The script mounts the checkout read-only, keeps build outputs and caches in Docker volumes, and
 uses half of the CPU cores unless `TREASURY_CI_CPUS` says otherwise.
+
+The `desktop` step builds the app and drives its window through `tauri-driver` against
+PostgreSQL in a container, the way a person would use it. To work on the interface itself, run
+`cargo tauri dev` in `crates/app` with Rust, [trunk](https://trunkrs.dev) and the
+`wasm32-unknown-unknown` target installed.
 
 ## Command line
 
