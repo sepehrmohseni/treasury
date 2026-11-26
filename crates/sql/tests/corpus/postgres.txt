@@ -1,0 +1,139 @@
+# PostgreSQL. LABEL<TAB>statement; "¶" is a newline.
+R	select * from t limit 10 offset 5
+R	select * from t fetch first 5 rows only
+R	values (1), (2)
+R	show search_path
+R	show all
+R	explain select * from t
+R	explain (format json) select * from t where a = 1
+R	explain analyze select * from t
+R	set search_path to public, extra
+R	set statement_timeout = 5000
+R	set application_name = 'treasury'
+R	set time zone 'UTC'
+R	set default_transaction_read_only = on
+R	reset search_path
+R	begin
+R	begin read only
+R	start transaction isolation level serializable
+R	start transaction read write
+R	savepoint s1
+R	release savepoint s1
+R	rollback to savepoint s1
+R	select now(), current_user, version()
+R	select pg_size_pretty(pg_database_size(current_database()))
+R	select jsonb_build_object('a', 1) -> 'a'
+R	select data->>'name' from t where data @> '{"a": 1}'
+R	select * from generate_series(1, 10) g
+R	select date_trunc('day', ts), count(*) from t group by 1
+R	select string_agg(name, ', ' order by name) from t
+R	select array_agg(a) filter (where a > 1) from t
+R	select * from pg_stat_activity where state = 'active'
+R	select relname, n_live_tup from pg_stat_user_tables
+R	select a::text, b::int from t
+R	select $1::int + 1
+R	with recursive r(n) as (select 1 union all select n + 1 from r where n < 10) select * from r
+R	select currval('orders_id_seq')
+R	select pg_sleep(0.1)
+R	copy t to stdout
+R	copy (select * from t) to stdout with (format csv)
+R	listen jobs
+R	fetch 10 from c
+R	close c
+R	select $$ drop table t; $$ as text
+R	select $body$ delete from t $body$
+R	select E'it\'s; delete from t'
+R	select * from t /* nested /* drop table t */ still comment */
+R	select lower(name) from t where id = any(array[1, 2, 3])
+R	select count(*) over () from t
+W	with d as (delete from t where a = 1 returning *) select * from d
+W	with u as (update t set a = 1 returning *) select count(*) from u
+W	with i as (insert into t values (1) returning id) select id from i
+W	insert into t values (1) on conflict do nothing
+W	insert into t values (1) on conflict (id) do update set a = excluded.a
+W	insert into t values (1) returning id
+W	update t set a = u.a from u where t.id = u.id
+W	delete from t using u where t.id = u.id
+W	merge into t using s on t.id = s.id when matched then update set a = s.a when not matched then insert values (s.id, s.a)
+W	select * from t for update
+W	select * from t for share skip locked
+W	select nextval('orders_id_seq')
+W	select setval('orders_id_seq', 100)
+W	select pg_advisory_lock(42)
+W	select pg_try_advisory_xact_lock(1)
+W	select lo_unlink(16384)
+W	select pg_notify('jobs', 'x')
+W	copy t from stdin
+W	copy t (a, b) from '/tmp/data.csv' with (format csv)
+W	lock table t in access exclusive mode
+W	notify jobs, 'payload'
+W	select nextval('s'), * from t
+W	explain analyze delete from t where a = 1
+W	explain analyze update t set a = 1
+W	begin; delete from t where id = 1; commit
+W	select * from t where id = (select nextval('s'))
+D	select * into t2 from t
+D	select a, b into temporary t3 from t where a > 1
+D	create table t2 as select * from t
+D	create table if not exists t (id serial primary key, data jsonb not null default '{}')
+D	create materialized view mv as select * from t
+D	refresh materialized view mv
+D	create schema app
+D	create extension if not exists pgcrypto
+D	create sequence s start 100
+D	create type mood as enum ('sad', 'ok', 'happy')
+D	create function f() returns int language sql as $$ select 1 $$
+D	create trigger trg before insert on t for each row execute function f()
+D	comment on table t is 'orders'
+D	truncate t
+D	truncate table t restart identity cascade
+D	drop table if exists t cascade
+D	drop schema app cascade
+D	drop extension pgcrypto
+D	drop function f()
+D	alter table t rename to t_old
+D	alter table t alter column a set not null
+D	alter index i rename to i2
+D	alter view v rename to v2
+D	drop sequence s
+D	drop trigger trg on t
+A	reset all
+A	set default_transaction_read_only = off
+A	set transaction_read_only = false
+A	set transaction read write
+A	set role admin
+A	set session authorization bob
+A	reset session authorization
+A	set work_level = 'x'
+A	select pg_terminate_backend(12345)
+A	select pg_cancel_backend(pid) from pg_stat_activity where state = 'idle'
+A	select pg_reload_conf()
+A	select set_config('default_transaction_read_only', 'off', false)
+A	select set_config('search_path', 'x', false)
+A	select pg_read_file('/etc/passwd')
+A	select lo_export(16384, '/tmp/x')
+A	copy t to '/tmp/out.csv'
+A	vacuum t
+A	analyze t
+A	create role reporter
+A	alter user bob with password 'y'
+A	grant usage on schema app to reporter
+A	revoke all on all tables in schema public from public
+A	discard all
+U	call refresh_all()
+U	do $$ begin delete from t; end $$
+U	execute my_statement
+U	prepare p as delete from t
+U	select my_function(1)
+U	select * from t where my_check(a)
+U	select a, compute_score(b) from t
+U	cluster t using i
+U	reindex table t
+U	alter system set work_mem = '1GB'
+U	select 1; call p()
+# Valid statements that sqlparser 0.64 cannot parse in this dialect. Treasury classifies
+# them as unknown, which counts as a possible write; relabel when the parser learns them.
+U	table t
+U	select * from t where id = 1 for no key update nowait
+U	vacuum full analyze t
+U	create user bob with password 'x'

@@ -1,0 +1,10 @@
+# MariaDB additions to mysql.txt.
+R	select * from t limit 10 offset 2
+R	select lastval(s)
+W	select nextval(s)
+W	select setval(s, 100)
+W	delete from t where a = 1 returning id
+W	select * from t for update skip locked
+D	create sequence s start with 10
+D	drop sequence s
+D	create or replace table t (id int)

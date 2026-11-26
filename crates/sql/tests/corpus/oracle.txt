@@ -1,0 +1,75 @@
+# Oracle. LABEL<TAB>statement; "¶" is a newline.
+R	select * from dual
+R	select sysdate from dual
+R	select systimestamp from dual
+R	select * from emp where rownum <= 10
+R	select * from emp order by sal fetch first 10 rows only
+R	select * from emp offset 10 rows fetch next 10 rows only
+R	select nvl(comm, 0), nvl2(comm, 1, 0) from emp
+R	select decode(deptno, 10, 'a', 'b') from emp
+R	select to_char(hiredate, 'YYYY-MM') from emp
+R	select listagg(ename, ', ') within group (order by ename) from emp
+R	select * from emp start with mgr is null connect by prior empno = mgr
+R	select level from dual connect by level <= 10
+R	select * from all_tables where owner = 'SCOTT'
+R	select * from v$session
+R	select s.currval from dual
+R	select q'[it's; delete from emp]' from dual
+R	select 'drop table emp' from dual
+R	select ename -- delete from emp¶from emp
+R	select ename /* truncate table emp */ from emp
+R	select * from emp e join dept d on e.deptno = d.deptno
+R	select deptno, sum(sal) from emp group by rollup (deptno)
+R	set transaction read only
+R	commit
+R	rollback
+R	savepoint before_change
+R	with e as (select * from emp) select * from e
+W	insert into emp (empno, ename) values (1, 'x')
+W	update emp set sal = sal * 1.1 where deptno = 10
+W	update emp set sal = 0
+W	delete from emp where empno = 1
+W	delete emp
+W	merge into emp e using new_emp n on (e.empno = n.empno) when matched then update set e.sal = n.sal when not matched then insert (empno) values (n.empno)
+W	select * from emp for update
+W	select * from emp where empno = 1 for update nowait
+W	select emp_seq.nextval from dual
+W	insert into emp (empno) values (emp_seq.nextval)
+W	lock table emp in exclusive mode
+W	select 1 from dual; delete from emp
+D	create table t (id number primary key, name varchar2(50))
+D	create table t as select * from emp
+D	create index i on emp (ename)
+D	create view v as select * from emp
+D	create or replace view v as select * from emp
+D	create sequence s start with 1
+D	drop table emp purge
+D	drop view v
+D	drop sequence s
+D	truncate table emp
+D	comment on table emp is 'employees'
+D	create or replace procedure p as¶begin¶  delete from emp;¶end;¶/
+D	create or replace package body pkg as¶  procedure p is begin null; end;¶end;¶/
+A	grant select on emp to reporter
+A	revoke select on emp from reporter
+A	create role reporter
+U	begin¶  delete from emp where empno = 1;¶  commit;¶end;¶/
+U	declare¶  n number;¶begin¶  select count(*) into n from emp;¶end;¶/
+U	begin dbms_stats.gather_table_stats('SCOTT', 'EMP'); end;¶/
+U	call my_proc()
+U	exec my_proc
+U	execute my_proc
+U	alter system kill session '12,34'
+U	select 1 from dual;¶begin¶  null;¶end;¶/
+# Valid statements that sqlparser 0.64 cannot parse in this dialect. Treasury classifies
+# them as unknown, which counts as a possible write; relabel when the parser learns them.
+U	explain plan for select * from emp
+U	select * from emp as of timestamp systimestamp - interval '1' hour
+U	insert all into a values (1) into b values (2) select * from dual
+U	create synonym e for scott.emp
+U	alter table emp add (bonus number)
+U	alter table emp modify (ename varchar2(100))
+U	alter session set nls_date_format = 'YYYY-MM-DD'
+U	create user bob identified by x
+# User functions may change data in this dialect, so calling one is unknown.
+U	select my_pkg.my_func(1) from dual

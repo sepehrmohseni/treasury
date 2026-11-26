@@ -1,0 +1,72 @@
+# SQL Server (T-SQL). LABEL<TAB>statement; "¶" is a newline.
+R	select top 10 * from dbo.orders
+R	select top (10) percent * from t order by a
+R	select * from [dbo].[orders] where [status] = N'open'
+R	select * from t order by a offset 10 rows fetch next 10 rows only
+R	select getdate(), sysdatetime(), @@version
+R	select db_name(), schema_name(), suser_sname()
+R	select isnull(a, 0), iif(a > 1, 'big', 'small') from t
+R	select string_agg(name, ', ') from t
+R	select * from t with (nolock)
+R	select count_big(*) from t
+R	select * from sys.tables
+R	select * from sys.dm_exec_requests
+R	select dbo.fn_total(id) from t
+R	select json_value(doc, '$.a') from t
+R	select * from openjson(@json)
+R	set nocount on
+R	set transaction isolation level read uncommitted
+R	set statistics io on
+R	use shop
+R	begin transaction
+R	begin tran
+R	commit transaction
+R	rollback tran
+R	declare @x int = 1
+R	declare @t table (a int)
+R	print 'done'
+R	waitfor delay '00:00:01'
+R	select '[drop table t]' as text
+R	select [delete] from t
+R	select a from t -- delete from t
+R	select a /* update t set a = 1 */ from t
+R	raiserror('x', 10, 1)
+W	insert into t values (1)
+W	insert into t output inserted.id values (1)
+W	update top (10) t set a = 1
+W	update t set a = u.a from t join u on t.id = u.id
+W	delete from t output deleted.* where id = 1
+W	delete t from t join u on t.id = u.id
+W	merge into t using s on t.id = s.id when matched then update set a = s.a;
+W	select * from t with (updlock) where id = 1
+W	declare @x int; select @x = 1; update t set a = @x
+W	select 1; delete from t
+D	select * into #tmp from t
+D	select a into dbo.copy from t
+D	create table t (id int identity(1, 1) primary key, name nvarchar(50))
+D	create index i on t (a) include (b)
+D	create view v as select a from t
+D	create schema app
+D	drop table if exists t
+D	drop table #tmp
+D	truncate table t
+D	alter table t add c int null
+D	alter table t drop column c
+A	grant select on t to reporter
+A	deny delete on t to reporter
+A	revoke select on t from reporter
+A	kill 55
+U	exec sp_who
+U	exec dbo.refresh_stats
+U	execute ('delete from t')
+U	exec sp_executesql N'delete from t'
+U	if exists (select 1 from t) delete from t
+U	while 1 = 1 begin delete top (1) from t end
+U	dbcc checkdb
+U	backup database shop to disk = 'c:\x.bak'
+U	begin try select 1 end try begin catch select 2 end catch
+U	select 1¶GO¶exec sp_who
+# Valid T-SQL that sqlparser 0.64 cannot parse (statements without a separator, CREATE LOGIN).
+# Treasury classifies them as unknown, which counts as a possible write.
+U	select 1 select 2
+U	create login bob with password = 'x'

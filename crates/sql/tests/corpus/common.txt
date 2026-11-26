@@ -1,0 +1,69 @@
+# Statements valid in every dialect. LABEL<TAB>statement; R W D A U; "¶" is a newline.
+R	select 1
+R	SELECT * FROM t
+R	select a, b from t where a = 1
+R	select a, count(*) from t group by a having count(*) > 1
+R	select * from t order by a desc, b
+R	select distinct a from t
+R	select * from a join b on a.id = b.id
+R	select * from a left join b on a.id = b.id where b.id is null
+R	select * from a inner join b on a.id = b.id inner join c on c.id = b.cid
+R	select * from t where a in (select a from u)
+R	select * from t where exists (select 1 from u where u.a = t.a)
+R	select * from t where a between 1 and 10
+R	select * from t where name like 'a%'
+R	select case when a > 1 then 'big' else 'small' end from t
+R	select coalesce(a, 0), nullif(b, 0) from t
+R	select upper(name), lower(name) from t
+R	select sum(a), avg(a), min(a), max(a) from t
+R	select cast(a as varchar(10)) from t
+R	select a from t union select a from u
+R	select a from t union all select a from u
+R	select a from t except select a from u
+R	select a from t intersect select a from u
+R	with x as (select 1 as a) select * from x
+R	with x as (select a from t), y as (select a from u) select * from x join y on x.a = y.a
+R	select row_number() over (order by a) from t
+R	select rank() over (partition by a order by b) from t
+R	select * from (select a from t) sub
+R	select t.* from t
+R	select 'delete from t' as text
+R	select 'drop table t; update t set a = 1' from t
+R	select "update" from t
+R	select a /* drop table t */ from t
+R	select a -- delete from t¶from t
+R	/* insert into t values (1) */ select 1
+R	commit
+R	rollback
+W	insert into t values (1)
+W	insert into t (a, b) values (1, 2), (3, 4)
+W	insert into t select * from u
+W	update t set a = 1 where id = 2
+W	update t set a = 1
+W	update t set a = a + 1, b = 'x' where a in (select a from u)
+W	delete from t where id = 1
+W	delete from t
+W	delete from t where a in (select a from u)
+W	/* select only */ delete from t where id = 1
+W	-- read only¶update t set a = 2
+W	select 1; update t set a = 1
+W	select 1; delete from t; select 2
+D	create table t (id int primary key, name varchar(100))
+D	create table t (id int, primary key (id))
+D	create index i on t (a)
+D	create unique index i on t (a, b)
+D	create view v as select a from t
+D	drop table t
+D	drop view v
+D	drop index i
+D	alter table t add c int
+D	alter table t drop column c
+D	select 1; drop table t
+D	update t set a = 1; drop table t
+A	grant select on t to someone
+A	revoke select on t from someone
+A	grant all privileges on t to someone
+U	frobnicate the database
+U	selec * from t
+U	select 1; frobnicate
+U	delete from t where; select 1

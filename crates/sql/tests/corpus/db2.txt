@@ -1,0 +1,69 @@
+# Db2. LABEL<TAB>statement; "¶" is a newline.
+R	select * from sysibm.sysdummy1
+R	select current date from sysibm.sysdummy1
+R	select current timestamp from sysibm.sysdummy1
+R	select * from t fetch first 10 rows only
+R	select * from t order by a fetch first 5 rows only
+R	select * from t offset 10 rows fetch next 10 rows only
+R	select * from syscat.tables where tabschema = 'APP'
+R	select * from syscat.columns where tabname = 'T'
+R	select coalesce(a, 0) from t
+R	select substr(name, 1, 3) from t
+R	select varchar(a) from t
+R	select char(created) from t
+R	select year(created), month(created) from t
+R	select length(name) from t
+R	select trim(name) from t
+R	select abs(a), round(b, 2) from t
+R	select rtrim(ltrim(name)) from t
+R	select count(*) from t where a > 1
+R	select 'delete from t' from sysibm.sysdummy1
+R	select a -- drop table t¶from t
+R	select a /* update t set a = 1 */ from t
+R	with x as (select a from t) select * from x
+R	select * from table(mon_get_table('', '', -2)) as m
+R	commit
+R	rollback
+W	insert into t values (1)
+W	insert into t (a) select a from u
+W	update t set a = 1 where id = 2
+W	update t set a = 1
+W	delete from t where id = 1
+W	delete from t
+W	merge into t using s on t.id = s.id when matched then update set a = s.a
+W	select * from t for update
+W	lock table t in exclusive mode
+W	select 1 from sysibm.sysdummy1; delete from t
+D	create table t (id integer not null primary key, name varchar(50))
+D	create index i on t (a)
+D	create view v as select * from t
+D	create schema app
+D	create sequence s start with 1
+D	create table t2 as (select * from t) with no data
+D	drop table t
+D	drop view v
+D	drop index i
+D	drop sequence s
+D	alter table t add column c integer
+D	alter table t alter column name set data type varchar(100)
+D	comment on table t is 'orders'
+A	grant select on t to user reporter
+A	revoke select on t from user reporter
+U	select next value for s from sysibm.sysdummy1
+U	select my_udf(a) from t
+U	call sysproc.admin_cmd('reorg table t')
+U	begin atomic¶  delete from t;¶  insert into u values (1);¶end
+U	declare global temporary table session.tmp (a int) on commit preserve rows
+U	reorg table t
+U	runstats on table app.t
+U	export to x.csv of del select * from t
+# Valid statements that sqlparser 0.64 cannot parse in this dialect. Treasury classifies
+# them as unknown, which counts as a possible write; relabel when the parser learns them.
+U	values current date
+U	values 1
+U	select * from t with ur
+U	select * from final table (select a from t)
+U	set schema app
+U	set current schema app
+U	select * from final table (insert into t values (1))
+U	truncate table t immediate

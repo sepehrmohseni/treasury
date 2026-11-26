@@ -1,0 +1,70 @@
+# Databricks SQL. LABEL<TAB>statement; "¶" is a newline.
+R	select * from main.sales.orders limit 10
+R	select * from `main`.`sales`.`orders`
+R	select * from t tablesample (10 percent)
+R	select explode(array(1, 2, 3))
+R	select * from t lateral view explode(items) e as item
+R	select get_json_object(raw, '$.a') from t
+R	select from_json(raw, 'a int') from t
+R	select date_add(current_date(), 1)
+R	select array_contains(tags, 'x') from t
+R	select struct(a, b) from t
+R	select my_udf(a) from t
+R	select * from t version as of 3
+R	select * from t timestamp as of '2024-01-01'
+R	show catalogs
+R	show schemas
+R	show tables in main.sales
+R	show columns in t
+R	use catalog main
+R	use schema sales
+R	describe t
+R	describe extended t
+R	explain select * from t
+R	select 'insert into t values (1)' as text
+R	select `delete` from t
+R	select a -- drop table t¶from t
+R	select a /* update t set a = 1 */ from t
+R	set spark.sql.shuffle.partitions = 8
+R	select current_catalog(), current_schema()
+W	insert into t values (1)
+W	insert into t select * from u
+W	insert overwrite t select * from u
+W	insert into t partition (dt = '2024-01-01') select a from u
+W	update t set a = 1 where id = 2
+W	delete from t where id = 1
+W	merge into t using s on t.id = s.id when matched then update set * when not matched then insert *
+W	select 1; delete from t
+D	create or replace table t (id bigint)
+D	create or replace view v as select * from t
+D	create table t as select * from u
+D	create table if not exists t (a int) partitioned by (a)
+D	create schema sales
+D	create view v as select * from t
+D	drop table t
+D	drop table if exists t
+D	drop schema sales cascade
+D	drop view v
+D	truncate table t
+D	alter table t rename to u
+D	alter table t set tblproperties ('delta.appendOnly' = 'true')
+A	grant select on table t to `analysts`
+A	revoke select on table t from `analysts`
+A	optimize t
+A	optimize t zorder by (a)
+A	vacuum t
+A	analyze table t compute statistics
+A	cache table t
+A	uncache table t
+U	refresh table t
+U	restore table t to version as of 3
+U	fsck repair table t
+U	copy into t from 's3://bucket/path' fileformat = csv
+U	call system.refresh()
+# Valid statements that sqlparser 0.64 cannot parse in this dialect. Treasury classifies
+# them as unknown, which counts as a possible write; relabel when the parser learns them.
+U	describe table t
+U	explain extended select * from t
+U	create table t (id bigint, name string) using delta
+U	alter table t add columns (c int)
+U	comment on table t is 'orders'

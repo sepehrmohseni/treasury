@@ -1,0 +1,97 @@
+# MySQL (also run for MariaDB). LABEL<TAB>statement; "¶" is a newline.
+R	select * from t limit 10
+R	select * from t limit 5, 10
+R	select * from `orders` where `status` = 'open'
+R	show tables
+R	show databases
+R	show create table t
+R	show columns from t
+R	show full processlist
+R	show variables like 'max%'
+R	show status
+R	describe t
+R	desc t
+R	explain select * from t
+R	explain format=json select * from t where a = 1
+R	explain analyze select * from t
+R	use shop
+R	set names utf8mb4
+R	set @x = 1
+R	set session max_execution_time = 1000
+R	set @@session.transaction_read_only = 1
+R	set session transaction read only
+R	start transaction read only
+R	start transaction read write
+R	begin
+R	select sleep(1)
+R	select now(), curdate(), database(), user(), version()
+R	select json_extract(doc, '$.a') from t
+R	select group_concat(name separator ', ') from t
+R	select date_format(created, '%Y-%m') from t
+R	select if(a > 1, 'big', 'small') from t
+R	select ifnull(a, 0) from t
+R	select 'a\';delete from t' as text
+R	select "drop table t" as text
+R	select a from t # delete from t
+R	select a from t -- update t set a = 1
+R	select 1 /*! , 2 */
+R	/*!40101 SET NAMES utf8 */
+R	select count(*) from information_schema.tables
+R	select * from t where match(title) against ('database')
+R	select found_rows()
+R	select last_insert_id()
+W	select 1 /*! ; delete from t */
+W	/*!50000 delete from t */
+W	insert into t values (1)
+W	insert ignore into t values (1)
+W	replace into t values (1, 'x')
+W	insert into t values (1) on duplicate key update a = values(a)
+W	update t join u on t.id = u.id set t.a = u.a where u.b = 1
+W	update t set a = 1 order by id limit 10
+W	delete from t where a = 1 limit 10
+W	delete t1 from t1 join t2 on t1.id = t2.id where t2.x = 1
+W	select get_lock('job', 10)
+W	select release_lock('job')
+W	select * from t for update
+W	select * from t where id = 1 for share
+W	lock tables t write
+W	explain analyze delete from t
+W	start transaction; update t set a = 1; commit
+D	create table t (id int auto_increment primary key, name varchar(50)) engine=innodb
+D	create table t2 like t
+D	create table t2 as select * from t
+D	create database shop
+D	create index i on t (a)
+D	create view v as select * from t
+D	create or replace view v as select * from t
+D	drop database shop
+D	drop table if exists t
+D	truncate table t
+D	alter table t add column b int after a
+D	alter table t modify a bigint
+D	rename table t to t_old
+A	set session transaction read write
+A	set session transaction_read_only = 0
+A	set global max_connections = 500
+A	set @@global.read_only = 0
+A	grant select on shop.* to 'reader'@'%'
+A	revoke all on shop.* from 'reader'@'%'
+A	kill query 42
+A	kill 42
+A	flush tables
+A	analyze table t
+A	select load_file('/etc/passwd')
+U	call refresh_stats()
+U	do sleep(1)
+U	handler t open
+U	select my_udf(a) from t
+U	prepare s from 'delete from t'
+U	execute s
+U	select 1; call p()
+U	DELIMITER //¶create procedure p() begin delete from t; end//¶DELIMITER ;
+# Valid statements that sqlparser 0.64 cannot parse in this dialect. Treasury classifies
+# them as unknown, which counts as a possible write; relabel when the parser learns them.
+U	load data infile '/tmp/x.csv' into table t
+U	select * into outfile '/tmp/x.csv' from t
+U	create user 'reader'@'%' identified by 'x'
+U	optimize table t

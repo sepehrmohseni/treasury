@@ -1,0 +1,68 @@
+# Snowflake. LABEL<TAB>statement; "¶" is a newline.
+R	select * from db.sch.t limit 10
+R	select * from t sample (10)
+R	select * from t qualify row_number() over (partition by a order by b) = 1
+R	select v:name::string from t
+R	select f.value from t, lateral flatten(input => t.v) f
+R	select parse_json('{"a": 1}'):a
+R	select iff(a > 1, 'big', 'small') from t
+R	select zeroifnull(a) from t
+R	select current_warehouse(), current_role(), current_account()
+R	select * from table(information_schema.query_history())
+R	select my_udf(a) from t
+R	select * from t at (offset => -60)
+R	select * from t changes (information => default) at (timestamp => current_timestamp())
+R	show tables
+R	show databases
+R	show warehouses
+R	list @my_stage
+R	use warehouse analytics_wh
+R	use database sales
+R	use schema sales.public
+R	describe table t
+R	explain select * from t
+R	begin transaction
+R	commit
+R	set q = 'x'
+R	select $1, $2 from @my_stage (file_format => 'csv')
+R	select 'delete from t' as text
+R	select $$ drop table t $$
+R	select a -- truncate table t¶from t
+W	insert into t select * from u
+W	insert overwrite into t select * from u
+W	update t set a = 1 where id = 2
+W	delete from t where id = 1
+W	merge into t using s on t.id = s.id when matched then delete
+W	copy into t from @my_stage file_format = (type = csv)
+W	copy into @my_stage from t
+W	remove @my_stage/data.csv
+W	select seq.nextval
+W	select 1; delete from t
+D	create table t (id number, name varchar)
+D	create or replace table t (id number)
+D	create or replace view v as select * from t
+D	create table t clone u
+D	create table t as select * from u
+D	create stage my_stage
+D	create file format csv type = csv
+D	create sequence seq
+D	drop table t
+D	truncate table t
+D	alter table t add column c number
+D	alter table t rename to u
+A	grant select on table t to role reporter
+A	revoke select on table t from role reporter
+A	create warehouse wh with warehouse_size = 'xsmall'
+A	select system$cancel_query('01a2b3c4')
+A	select system$abort_session(123)
+A	create role reporter
+A	alter session set query_tag = 'x'
+U	call refresh_all()
+U	execute immediate $$ delete from t $$
+U	begin¶  delete from t;¶  insert into u values (1);¶end
+U	declare¶  c number;¶begin¶  c := 1;¶  return c;¶end
+U	alter warehouse wh suspend
+U	undrop table t
+# Valid statements that sqlparser 0.64 cannot parse in this dialect. Treasury classifies
+# them as unknown, which counts as a possible write; relabel when the parser learns them.
+U	put file:///tmp/data.csv @my_stage
