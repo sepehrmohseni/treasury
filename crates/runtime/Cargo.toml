@@ -10,12 +10,12 @@ homepage.workspace = true
 publish.workspace = true
 
 [dependencies]
-treasury-core.workspace = true
+treasury-core = { workspace = true, features = ["runtime"] }
+treasury-ipc.workspace = true
 treasury-store.workspace = true
 treasury-tunnel.workspace = true
 treasury-vault.workspace = true
 futures.workspace = true
-serde.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 
 [dev-dependencies]

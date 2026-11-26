@@ -4,8 +4,10 @@
 #![forbid(unsafe_code)]
 
 pub mod analyze;
+#[cfg(feature = "runtime")]
 pub mod cache;
 pub mod config;
+#[cfg(feature = "runtime")]
 pub mod cursor;
 pub mod driver;
 pub mod edit;
@@ -17,6 +19,7 @@ pub mod health;
 pub mod json;
 pub mod plan;
 pub mod schema;
+#[cfg(feature = "runtime")]
 pub mod task;
 pub mod uri;
 pub mod value;

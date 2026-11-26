@@ -1,0 +1,42 @@
+[package]
+name = "treasury-app"
+description = "The Treasury desktop app: the Tauri shell around the runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "treasury-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7.6", features = [] }
+
+[dependencies]
+treasury-core = { workspace = true, features = ["runtime"] }
+treasury-runtime.workspace = true
+treasury-ipc.workspace = true
+treasury-store.workspace = true
+treasury-vault.workspace = true
+treasury-tunnel.workspace = true
+treasury-import.workspace = true
+treasury-export.workspace = true
+treasury-driver-postgres.workspace = true
+treasury-driver-mysql.workspace = true
+treasury-driver-mssql.workspace = true
+treasury-driver-mongo.workspace = true
+async-trait.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+tauri = { version = "2.12.7", features = [] }
+tauri-plugin-dialog = "2.8.4"
+
+[lints]
+workspace = true

@@ -2,6 +2,7 @@
 
 use super::*;
 use async_trait::async_trait;
+use treasury_core::analyze::StatementClass;
 use treasury_core::config::Engine;
 use treasury_tests::mock::{MockDriver, PASSWORD};
 use treasury_vault::{MemoryStore, Sealer};

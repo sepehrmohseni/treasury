@@ -26,7 +26,7 @@ mkdir -p "$HOME"
 # target volume stays valid between runs.
 W=/work/treasury
 mkdir -p "$W"
-tar -C /src --exclude=./.git --exclude=./target --exclude=./ui/node_modules --exclude=./ui/dist \
+tar -C /src --exclude=./.git --exclude=./target --exclude=./crates/ui/dist \
   --exclude=./site/node_modules --exclude=./site/book --exclude=./.work -cf - . | tar -C "$W" -xf -
 cd "$W"
 

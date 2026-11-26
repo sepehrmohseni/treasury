@@ -95,7 +95,30 @@ RUN set -eu; \
     cargo llvm-cov --version; cargo audit --version
 
 RUN rustup component add clippy rustfmt llvm-tools \
+ && rustup target add wasm32-unknown-unknown \
  && chmod -R a+rwX "$CARGO_HOME" "$RUSTUP_HOME"
+
+# The interface is Leptos compiled to WebAssembly (ADR 0011). trunk builds it, wasm-bindgen-cli
+# must match the wasm-bindgen version in Cargo.lock, and the Tauri CLI bundles the app. They are
+# built from crates.io at pinned versions with --locked, so cargo verifies every source checksum;
+# wasm-opt comes from Debian's binaryen.
+ARG TRUNK_VERSION=0.22.2
+ARG WASM_BINDGEN_VERSION=0.2.130
+ARG TAURI_CLI_VERSION=2.12.6
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends binaryen \
+ && rm -rf /var/lib/apt/lists/* \
+ && cargo install --locked --root /usr/local "trunk@${TRUNK_VERSION}" \
+ && cargo install --locked --root /usr/local "wasm-bindgen-cli@${WASM_BINDGEN_VERSION}" \
+ && cargo install --locked --root /usr/local "tauri-cli@${TAURI_CLI_VERSION}" \
+ && rm -rf "$CARGO_HOME/registry" "$CARGO_HOME/git" \
+ && trunk --version && wasm-bindgen --version && cargo tauri --version && wasm-opt --version
+
+# tauri-driver puts WebDriver in front of WebKitWebDriver for the desktop end-to-end test. Its own
+# layer, so changing it does not rebuild the tools above.
+ARG TAURI_DRIVER_VERSION=2.1.0
+RUN cargo install --locked --root /usr/local "tauri-driver@${TAURI_DRIVER_VERSION}" \
+ && rm -rf "$CARGO_HOME/registry" "$CARGO_HOME/git"
 
 # The container runs as the caller's own user id, so caches and the account file must be
 # writable by any id. The caches live in named volumes created from these directories.

@@ -14,7 +14,7 @@ name = "treasury"
 path = "src/main.rs"
 
 [dependencies]
-treasury-core.workspace = true
+treasury-core = { workspace = true, features = ["runtime"] }
 treasury-sql.workspace = true
 treasury-import.workspace = true
 treasury-export.workspace = true

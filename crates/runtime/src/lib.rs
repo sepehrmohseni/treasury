@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
-use treasury_core::analyze::{CountPlan, LimitPlan, StatementClass};
+use treasury_core::analyze::{CountPlan, LimitPlan};
 use treasury_core::cache::PageStore;
 use treasury_core::config::{ConnectionConfig, ConnectionId, Engine, Environment};
 use treasury_core::cursor::{Execution, ExecutionOptions, ExecutionStatus, Window};
@@ -86,22 +86,7 @@ impl Live {
     }
 }
 
-/// What the user must see or do before a statement runs.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Prepared {
-    /// Pass this to [`Runtime::run`].
-    pub token: u64,
-    /// What the statement is.
-    pub class: StatementClass,
-    /// The leading keywords, for the dialog.
-    pub summary: String,
-    /// Why it cannot run, when it cannot.
-    pub refused: Option<String>,
-    /// The rows it changes, when they were counted.
-    pub count: Option<u64>,
-    /// Why the connection name must be typed, when it must.
-    pub name_required: Option<String>,
-}
+pub use treasury_ipc::Prepared;
 
 struct Ticket {
     connection: ConnectionId,

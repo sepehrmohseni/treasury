@@ -45,8 +45,17 @@ jobs:
         with:
           toolchain: "1.100.0"
           components: clippy
+          targets: wasm32-unknown-unknown
+      # WebKitGTK and the libraries the Tauri shell links on Linux.
+      - name: Install the desktop libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev \
+            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo xtask ci clippy
+      - run: cargo xtask ci clippy wasm
 
   supply-chain:
     name: cargo-deny and cargo-audit
@@ -81,6 +90,14 @@ jobs:
       - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
         with:
           tool: cargo-nextest@0.9.152
+      # WebKitGTK and the libraries the Tauri shell links on Linux.
+      - name: Install the desktop libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev \
+            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev
       - run: cargo xtask ci test
 
   integration:
@@ -97,6 +114,14 @@ jobs:
       - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
         with:
           tool: cargo-nextest@0.9.152
+      # WebKitGTK and the libraries the Tauri shell links on Linux.
+      - name: Install the desktop libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev \
+            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev
       # The database images are large; pulling them up front keeps the tests' own time limits
       # about the tests. The tests pull anything missing themselves.
       - name: Pull test images
@@ -107,3 +132,35 @@ jobs:
           done
           wait
       - run: cargo xtask ci integration
+
+  desktop:
+    name: desktop app end to end
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: "1.100.0"
+          targets: wasm32-unknown-unknown
+      - name: Install the desktop libraries, WebKitWebDriver and Xvfb
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev \
+            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev webkit2gtk-driver xvfb binaryen
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
+        with:
+          tool: cargo-nextest@0.9.152
+      # The same pinned versions as docker/ci/Dockerfile; --locked makes cargo check every
+      # source against Cargo.lock's checksums. The cache above keeps the binaries between runs.
+      - name: Install the interface and app tools
+        run: |
+          cargo install --locked trunk@0.22.2
+          cargo install --locked wasm-bindgen-cli@0.2.130
+          cargo install --locked tauri-cli@2.12.6
+          cargo install --locked tauri-driver@2.1.0
+      - run: docker pull -q postgres:19.0-alpine
+      - run: cargo xtask ci desktop

@@ -17,6 +17,7 @@ pub mod docker;
 pub mod memory;
 pub mod mock;
 pub mod site;
+pub mod webdriver;
 
 use secrecy::SecretString;
 use std::collections::HashMap;

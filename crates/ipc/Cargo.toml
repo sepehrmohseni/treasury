@@ -1,0 +1,17 @@
+[package]
+name = "treasury-ipc"
+description = "The data the app and its interface exchange, shared so the two cannot drift"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+treasury-core = { path = "../core", default-features = false }
+serde.workspace = true
+
+[lints]
+workspace = true

@@ -1,7 +1,7 @@
 //! What a driver produces when it runs a statement: a stream of events, so result sets of any
 //! size arrive page by page and the caller decides how far to read.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::value::Value;
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
@@ -197,3 +197,37 @@ pub enum ExecEvent {
 /// The events of one execution. Rows are produced only as the stream is polled, so a slow
 /// reader keeps the server-side cursor where it is instead of buffering the whole result.
 pub type ExecStream = BoxStream<'static, Result<ExecEvent>>;
+
+/// One result set's state, as the UI sees it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SetStatus {
+    /// Columns; empty for a statement that returns no rows.
+    pub columns: Vec<Column>,
+    /// Rows fetched so far and kept.
+    pub rows: u64,
+    /// The server has no more rows for this set.
+    pub complete: bool,
+    /// Reading stopped at the row limit; more rows exist.
+    pub limited: bool,
+    /// Rows changed, for statements that change data.
+    pub affected: Option<u64>,
+    /// An export read the rest of this set straight to a file; rows after `rows` are not kept.
+    pub exported_rest: bool,
+}
+
+/// The execution as a whole.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExecutionStatus {
+    /// Identifier.
+    pub id: u64,
+    /// Result sets so far.
+    pub sets: Vec<SetStatus>,
+    /// Server messages.
+    pub notices: Vec<Notice>,
+    /// Notices beyond the stored maximum.
+    pub dropped_notices: u64,
+    /// The stream has ended (finished, failed, cancelled or stopped at the limit).
+    pub finished: bool,
+    /// The error that ended it, if one did.
+    pub error: Option<Error>,
+}

@@ -4,9 +4,9 @@
 use crate::cache::{PageKey, PageStore};
 use crate::error::{Error, Result};
 use crate::exec::{Column, ExecEvent, ExecStream, Notice, Row};
+pub use crate::exec::{ExecutionStatus, SetStatus};
 use crate::task::guarded;
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use tokio::sync::watch;
@@ -32,40 +32,6 @@ impl Default for ExecutionOptions {
             max_rows: None,
         }
     }
-}
-
-/// One result set's state, as the UI sees it.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SetStatus {
-    /// Columns; empty for a statement that returns no rows.
-    pub columns: Vec<Column>,
-    /// Rows fetched so far and kept.
-    pub rows: u64,
-    /// The server has no more rows for this set.
-    pub complete: bool,
-    /// Reading stopped at the row limit; more rows exist.
-    pub limited: bool,
-    /// Rows changed, for statements that change data.
-    pub affected: Option<u64>,
-    /// An export read the rest of this set straight to a file; rows after `rows` are not kept.
-    pub exported_rest: bool,
-}
-
-/// The execution as a whole.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ExecutionStatus {
-    /// Identifier.
-    pub id: u64,
-    /// Result sets so far.
-    pub sets: Vec<SetStatus>,
-    /// Server messages.
-    pub notices: Vec<Notice>,
-    /// Notices beyond the stored maximum.
-    pub dropped_notices: u64,
-    /// The stream has ended (finished, failed, cancelled or stopped at the limit).
-    pub finished: bool,
-    /// The error that ended it, if one did.
-    pub error: Option<Error>,
 }
 
 /// Rows of one result set, starting at `start`.

@@ -12,7 +12,7 @@ homepage = "https://sepehrmohseni.github.io/treasury/"
 publish = false
 
 [workspace.dependencies]
-treasury-core = { path = "crates/core" }
+treasury-core = { path = "crates/core", default-features = false }
 treasury-sql = { path = "crates/sql" }
 treasury-vault = { path = "crates/vault" }
 treasury-store = { path = "crates/store" }
@@ -24,6 +24,7 @@ treasury-driver-mysql = { path = "crates/driver-mysql" }
 treasury-driver-mssql = { path = "crates/driver-mssql" }
 treasury-driver-mongo = { path = "crates/driver-mongo" }
 treasury-runtime = { path = "crates/runtime" }
+treasury-ipc = { path = "crates/ipc" }
 treasury-tests = { path = "tests" }
 
 async-trait = "0.1.92"
@@ -66,6 +67,17 @@ opt-level = 3
 lto = "thin"
 strip = "symbols"
 panic = "unwind"
+
+# The interface's WebAssembly. The window loads and compiles all of it at every start, so it is
+# built for size. Symbols stay for wasm-bindgen, which reads the target features from them;
+# wasm-opt removes them afterwards.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = false
 
 [profile.dev]
 debug = "line-tables-only"

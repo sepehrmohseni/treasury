@@ -1,0 +1,53 @@
+//! What the window shows with no connection open: the two ways to start, and a short walkthrough
+//! the first time, which can be put away for good.
+
+use crate::ipc;
+use crate::sidebar::{add_connection, import_connections};
+use crate::state::ui;
+use leptos::prelude::*;
+
+/// The walkthrough steps: short, in the order a first session goes.
+const STEPS: &[&str] = &[
+    "Add a connection, or import the ones you have in another client: DBeaver, Beekeeper Studio, pgAdmin, DataGrip or MongoDB Compass.",
+    "Open it from the list on the left. Production connections open read-only and are marked in red.",
+    "Write a statement and press Ctrl+Enter to run the one under the cursor. Plain SELECTs get a 1,000-row limit.",
+    "Before an UPDATE or DELETE runs on a shared database, Treasury shows how many rows it changes.",
+    "Export any result to CSV, JSON or Parquet from the bar under the grid.",
+];
+
+pub fn set_setting(key: &'static str, value: serde_json::Value) {
+    leptos::task::spawn_local(async move {
+        let _ = ipc::call::<_, ()>(
+            "set_setting",
+            &serde_json::json!({ "key": key, "value": value }),
+        )
+        .await;
+    });
+}
+
+#[component]
+pub fn Home() -> impl IntoView {
+    let state = ui();
+    view! {
+        <main class="home-pane">
+            <div class="home">
+                <h1>"Connect to a database"</h1>
+                <p>"Treasury opens PostgreSQL, MySQL, MariaDB, SQL Server and MongoDB. Passwords go to your system keychain, never to a settings file."</p>
+                <div class="actions">
+                    <button class="btn primary" on:click=move |_| add_connection()>"Add connection"</button>
+                    <button class="btn" on:click=move |_| import_connections()>"Import connections"</button>
+                </div>
+                <Show when=move || !state.tutorial_done.get()>
+                    <section class="tour" aria-labelledby="tour-title">
+                        <strong id="tour-title">"Your first five minutes"</strong>
+                        <ol>{STEPS.iter().map(|s| view! { <li>{*s}</li> }).collect_view()}</ol>
+                        <button class="btn small" on:click=move |_| {
+                            state.tutorial_done.set(true);
+                            set_setting("tutorial_done", serde_json::Value::Bool(true));
+                        }>"Got it, hide this"</button>
+                    </section>
+                </Show>
+            </div>
+        </main>
+    }
+}

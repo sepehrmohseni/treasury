@@ -43,6 +43,8 @@ confidence-threshold = 0.9
 exceptions = [
   # A public-domain dedication; the MongoDB driver uses it through const-random.
   { allow = ["CC0-1.0"], crate = "tiny-keccak" },
+  # The same dedication; Leptos's code splitting uses it to name chunks.
+  { allow = ["CC0-1.0"], crate = "base16" },
 ]
 
 [licenses.private]
