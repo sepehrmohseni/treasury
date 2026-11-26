@@ -1,0 +1,42 @@
+[package]
+name = "treasury-vault"
+description = "Secret storage: platform keychains and an encrypted vault file"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+treasury-core.workspace = true
+argon2.workspace = true
+chacha20poly1305.workspace = true
+getrandom.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+secrecy.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+tempfile.workspace = true
+keyring-core = "1.1.0"
+
+# The platform secret stores. Android gets its own store from the app (see the Kotlin plugin).
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1.0.3", features = ["keychain"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+apple-native-keyring-store = { version = "1.0.3", features = ["protected"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = "1.1.0"
+
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+zbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
