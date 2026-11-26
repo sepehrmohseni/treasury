@@ -9,11 +9,12 @@ use crate::ipc;
 use crate::state::{Approved, Dialog, ui};
 use leptos::prelude::*;
 use treasury_core::analyze::Analyzer;
-use treasury_core::config::{ConnectionId, Engine, Environment};
+use treasury_core::config::{ConnectionConfig, ConnectionId, Engine, Environment};
 use treasury_core::driver::SqlDialect;
+use treasury_core::schema::{ObjectKind, ObjectNode};
 use treasury_ipc::{LiveView, Prepared};
-use treasury_sql::SqlAnalyzer;
 use treasury_sql::highlight::{SpanKind, highlight};
+use treasury_sql::{SqlAnalyzer, render};
 
 /// Short tips, one shown at a time.
 const HINTS: &[&str] = &[
@@ -24,6 +25,7 @@ const HINTS: &[&str] = &[
     "UPDATE and DELETE on shared databases show how many rows they change before they run.",
     "Export streams straight to the file, so results larger than memory export fine.",
     "Double-click a cell of a one-table result to edit it. Nothing is saved until you review the statements.",
+    "Double-click a table in the list on the left to see its rows.",
 ];
 
 pub fn dialect_of(engine: Engine) -> Option<SqlDialect> {
@@ -37,6 +39,49 @@ pub fn dialect_of(engine: Engine) -> Option<SqlDialect> {
         Engine::Oracle => SqlDialect::Oracle,
         Engine::Db2 => SqlDialect::Db2,
         _ => return None,
+    })
+}
+
+/// The statement that shows the rows of a table, view or collection in the tree, or `None` for
+/// other objects.
+pub fn browse_statement(config: &ConnectionConfig, node: &ObjectNode) -> Option<String> {
+    if !matches!(
+        node.kind,
+        ObjectKind::Table
+            | ObjectKind::View
+            | ObjectKind::MaterializedView
+            | ObjectKind::Collection
+    ) {
+        return None;
+    }
+    let name = node.path.0.last()?.name.as_str();
+    let database = node.path.find(ObjectKind::Database);
+    let schema = node.path.find(ObjectKind::Schema);
+    let d = dialect_of(config.engine);
+    Some(match (config.engine, d) {
+        // The command name comes first, so the text is written out rather than serialized.
+        (Engine::MongoDb, _) => {
+            let db = database.or(config.database.as_deref()).unwrap_or("test");
+            format!(
+                "{{\"find\": {}, \"filter\": {{}}, \"$db\": {}}}",
+                serde_json::Value::from(name),
+                serde_json::Value::from(db)
+            )
+        }
+        (Engine::MySql | Engine::MariaDb, Some(d)) => {
+            format!("SELECT * FROM {}", render::table(d, database, name))
+        }
+        // A table in another database needs its database named; the grid cannot edit those.
+        (Engine::SqlServer, Some(d)) => match database {
+            Some(db) if Some(db) != config.database.as_deref() => format!(
+                "SELECT * FROM {}.{}",
+                render::ident(d, db),
+                render::table(d, Some(schema.unwrap_or("dbo")), name)
+            ),
+            _ => format!("SELECT * FROM {}", render::table(d, schema, name)),
+        },
+        (_, Some(d)) => format!("SELECT * FROM {}", render::table(d, schema, name)),
+        (_, None) => return None,
     })
 }
 
@@ -215,6 +260,20 @@ pub fn Workspace() -> impl IntoView {
         start(id, statement, out, limit.get_untracked());
     };
 
+    // A table double-clicked in the tree: show its rows.
+    Effect::new(move |_| {
+        if let Some(statement) = state.open_rows.get() {
+            state.open_rows.set(None);
+            if let Some(id) = state.active.get_untracked() {
+                state.texts.update(|t| {
+                    t.insert(id.clone(), statement.clone());
+                });
+                state.notice.set(None);
+                start(id, statement, out, limit.get_untracked());
+            }
+        }
+    });
+
     // Saved grid edits: run the statement again to show the rows as they are now.
     let rerun = Callback::new(move |()| {
         if let Some((id, statement)) = out.statement.get_untracked()
@@ -359,6 +418,81 @@ mod tests {
             "SELECT 1"
         );
         assert_eq!(statement_at(None, " {\"ping\": 1} ", 0, 0), "{\"ping\": 1}");
+    }
+
+    fn node(
+        engine: Engine,
+        database: Option<&str>,
+        parts: &[(ObjectKind, &str)],
+    ) -> (ConnectionConfig, ObjectNode) {
+        let mut config = ConnectionConfig::new("c", engine, "h").unwrap();
+        config.database = database.map(str::to_owned);
+        let mut path = treasury_core::schema::ObjectPath::root();
+        for (k, n) in parts {
+            path = path.child(*k, *n);
+        }
+        let (kind, name) = parts[parts.len() - 1];
+        let node = ObjectNode {
+            path,
+            kind,
+            name: name.to_owned(),
+            expandable: false,
+            detail: None,
+        };
+        (config, node)
+    }
+
+    #[test]
+    fn tables_in_the_tree_open_as_a_select() {
+        use ObjectKind::{Collection, Database, Group, Schema, Table, View};
+        let (c, n) = node(
+            Engine::Postgres,
+            Some("shop"),
+            &[(Schema, "Sales"), (Group, "Tables"), (Table, "order lines")],
+        );
+        assert_eq!(
+            browse_statement(&c, &n).unwrap(),
+            r#"SELECT * FROM "Sales"."order lines""#
+        );
+        let (c, n) = node(
+            Engine::MySql,
+            None,
+            &[(Database, "shop"), (Group, "Views"), (View, "open")],
+        );
+        assert_eq!(
+            browse_statement(&c, &n).unwrap(),
+            "SELECT * FROM `shop`.`open`"
+        );
+        let (c, n) = node(
+            Engine::SqlServer,
+            Some("shop"),
+            &[(Database, "shop"), (Schema, "dbo"), (Table, "t")],
+        );
+        assert_eq!(browse_statement(&c, &n).unwrap(), "SELECT * FROM [dbo].[t]");
+        let (c, n) = node(
+            Engine::SqlServer,
+            Some("shop"),
+            &[(Database, "audit"), (Schema, "dbo"), (Table, "t")],
+        );
+        assert_eq!(
+            browse_statement(&c, &n).unwrap(),
+            "SELECT * FROM [audit].[dbo].[t]"
+        );
+        let (c, n) = node(
+            Engine::MongoDb,
+            Some("app"),
+            &[(Database, "app"), (Collection, "users")],
+        );
+        assert_eq!(
+            browse_statement(&c, &n).unwrap(),
+            r#"{"find": "users", "filter": {}, "$db": "app"}"#
+        );
+        let (c, n) = node(
+            Engine::Postgres,
+            None,
+            &[(Schema, "public"), (Schema, "public")],
+        );
+        assert!(browse_statement(&c, &n).is_none(), "a schema has no rows");
     }
 
     #[test]

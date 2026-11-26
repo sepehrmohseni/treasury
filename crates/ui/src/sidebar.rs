@@ -189,9 +189,19 @@ fn TreeLevel(connection: ConnectionId, path: ObjectPath, depth: usize) -> impl I
 
 #[component]
 fn TreeNode(connection: ConnectionId, node: ObjectNode, depth: usize) -> impl IntoView {
+    let state = ui();
     let open = RwSignal::new(false);
     let expandable = node.expandable;
     let path = node.path.clone();
+    let browse = node.clone();
+    let show_rows = move |_| {
+        if let Some(statement) = state
+            .active_config()
+            .and_then(|c| crate::editor::browse_statement(&c, &browse))
+        {
+            state.open_rows.set(Some(statement));
+        }
+    };
     view! {
         <button
             class="item"
@@ -199,6 +209,7 @@ fn TreeNode(connection: ConnectionId, node: ObjectNode, depth: usize) -> impl In
             aria-expanded=move || expandable.then(|| open.get().to_string())
             style:padding-inline-start=format!("{}px", 12 + depth * 14)
             on:click=move |_| if expandable { open.update(|o| *o = !*o) }
+            on:dblclick=show_rows
         >
             <span class="twisty">{move || if !expandable { " " } else if open.get() { "▾" } else { "▸" }}</span>
             <span>{node.name.clone()}</span>

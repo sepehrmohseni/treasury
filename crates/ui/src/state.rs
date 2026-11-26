@@ -60,6 +60,9 @@ pub struct Ui {
     pub saved: RwSignal<Option<u64>>,
     /// A newer release, found by the check at start.
     pub update: RwSignal<Option<UpdateView>>,
+    /// A statement for the workspace to put in the editor and run, such as the rows of a table
+    /// double-clicked in the tree.
+    pub open_rows: RwSignal<Option<String>>,
 }
 
 /// A statement the user confirmed in the guardrail dialog.
@@ -87,6 +90,7 @@ impl Ui {
             approved: RwSignal::new(None),
             saved: RwSignal::new(None),
             update: RwSignal::new(None),
+            open_rows: RwSignal::new(None),
         }
     }
 
