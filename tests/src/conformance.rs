@@ -275,6 +275,11 @@ pub async fn stream_million_rows(f: &dyn Fixture) -> Result<(), String> {
         },
     );
     let mut peak_rss = 0u64;
+    let mut peak_cache = 0usize;
+    // By the first quarter every buffer the engine's client keeps is in use, so from there on
+    // memory must stay flat: rows that piled up would show as steady growth.
+    const STEADY: u64 = N / 4;
+    let mut steady = None;
     let mut start = 0u64;
     let mut last = Value::Null;
     while start < N {
@@ -296,8 +301,12 @@ pub async fn stream_million_rows(f: &dyn Fixture) -> Result<(), String> {
             "page cache {} bytes over budget",
             store.stats().memory_bytes
         );
+        peak_cache = peak_cache.max(store.stats().memory_bytes);
         if let Some(r) = rss_bytes() {
             peak_rss = peak_rss.max(r);
+            if start == STEADY {
+                steady = Some(r);
+            }
         }
     }
     ensure!(start == N, "read {start} rows, expected {N}");
@@ -305,15 +314,27 @@ pub async fn stream_million_rows(f: &dyn Fixture) -> Result<(), String> {
         matches!(last, Value::I64(n) if n == 1_000_000),
         "last row was {last:?}"
     );
-    if let (Some(b), true) = (before, peak_rss > 0) {
+    if let (Some(b), Some(steady), true) = (before, steady, peak_rss > 0) {
+        const MB: u64 = 1024 * 1024;
         let growth = peak_rss.saturating_sub(b);
-        let allowed = BUDGET as u64 + 20 * 1024 * 1024;
+        let later = peak_rss.saturating_sub(steady);
+        // The page cache, plus what the engine's client library and the allocator keep, which
+        // differs by engine but not with the number of rows.
+        let allowed = BUDGET as u64 + 32 * MB;
+        let allowed_later = 16 * MB;
         println!(
-            "      rss before {} MB, peak {} MB, growth {} MB (allowed {} MB)",
+            "      rss before {} MB, at {STEADY} rows {} MB, peak {} MB; page cache peak {} MB",
             b >> 20,
+            steady >> 20,
             peak_rss >> 20,
-            growth >> 20,
-            allowed >> 20
+            peak_cache >> 20
+        );
+        ensure!(
+            later <= allowed_later,
+            "RSS grew by {} MB over the last {} rows, more than {} MB: rows are piling up",
+            later >> 20,
+            N - STEADY,
+            allowed_later >> 20
         );
         ensure!(
             growth <= allowed,
