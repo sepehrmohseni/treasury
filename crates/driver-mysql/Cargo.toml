@@ -1,0 +1,29 @@
+[package]
+name = "treasury-driver-mysql"
+description = "MySQL and MariaDB driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+treasury-core.workspace = true
+treasury-sql.workspace = true
+treasury-tunnel.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+secrecy.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["net", "sync", "time", "rt", "macros"] }
+mysql_async = { version = "0.37.1", default-features = false, features = ["default-rustls-ring", "client_ed25519"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+rustls-native-certs = "0.8.5"
+
+[lints]
+workspace = true

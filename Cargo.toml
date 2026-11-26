@@ -20,6 +20,7 @@ treasury-tunnel = { path = "crates/tunnel" }
 treasury-export = { path = "crates/export" }
 treasury-import = { path = "crates/import" }
 treasury-driver-postgres = { path = "crates/driver-postgres" }
+treasury-driver-mysql = { path = "crates/driver-mysql" }
 
 async-trait = "0.1.92"
 futures = { version = "0.3.34", default-features = false, features = ["std", "async-await"] }
