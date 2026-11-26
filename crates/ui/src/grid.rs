@@ -329,7 +329,7 @@ pub fn Results(
             <div class="result-tabs" role="tablist">
                 {move || status.get().map(|st| st.sets.iter().enumerate().map(|(i, s)| {
                     let label = if s.columns.is_empty() {
-                        match s.affected { Some(n) => format!("{} rows changed", thousands(n)), None => "Done".into() }
+                        match s.affected { Some(1) => "1 row changed".into(), Some(n) => format!("{} rows changed", thousands(n)), None => "Done".into() }
                     } else {
                         format!("Result {}", i + 1)
                     };

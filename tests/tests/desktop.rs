@@ -232,6 +232,13 @@ mod desktop {
             "return document.documentElement.dataset.theme === 'dark'",
             10,
         );
+        // Controls take the theme's colours too, not the system's white.
+        s.wait_script(
+            "return getComputedStyle(document.querySelector('.brand .settings')).backgroundColor \
+             !== 'rgb(255, 255, 255)'",
+            10,
+        );
+        s.wait_text(".result-tabs", "1 row changed", 10);
         shot("12-dark");
         s.click_css(".brand .settings");
         s.wait("#st-theme", 10);
