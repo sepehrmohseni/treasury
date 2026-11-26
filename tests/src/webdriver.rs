@@ -4,7 +4,7 @@
 //! Calls are blocking and go to a driver on this machine over plain HTTP.
 
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -25,6 +25,9 @@ pub mod key {
 pub struct TauriDriver {
     child: Child,
     port: u16,
+    /// What tauri-driver, WebKitWebDriver and the app write to standard error.
+    log: PathBuf,
+    _dir: tempfile::TempDir,
 }
 
 impl TauriDriver {
@@ -33,6 +36,8 @@ impl TauriDriver {
     pub fn start(native: &Path, env: &[(&str, &Path)]) -> Self {
         let port = free_port();
         let native_port = free_port();
+        let dir = tempfile::tempdir().expect("a directory for the app's log");
+        let log = dir.path().join("app.log");
         let mut cmd = Command::new("tauri-driver");
         cmd.arg("--port")
             .arg(port.to_string())
@@ -40,15 +45,22 @@ impl TauriDriver {
             .arg(native_port.to_string())
             .arg("--native-driver")
             .arg(native)
-            // Its children (WebKitWebDriver, the app) inherit these; with the test's own output
-            // they would outlive it.
+            // Its children (WebKitWebDriver, the app) inherit these. A file, not the test's own
+            // output, which they would outlive; failure messages quote its end.
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::from(
+                std::fs::File::create(&log).expect("create the app's log"),
+            ));
         for (k, v) in env {
             cmd.env(k, v);
         }
         let child = cmd.spawn().expect("start tauri-driver");
-        let driver = Self { child, port };
+        let driver = Self {
+            child,
+            port,
+            log,
+            _dir: dir,
+        };
         let deadline = Instant::now() + Duration::from_secs(30);
         while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
             assert!(Instant::now() < deadline, "tauri-driver did not start");
@@ -76,6 +88,7 @@ impl TauriDriver {
         Session {
             agent,
             url: format!("{base}/session/{id}"),
+            log: self.log.clone(),
         }
     }
 }
@@ -113,6 +126,7 @@ pub struct Element(String);
 pub struct Session {
     agent: ureq::Agent,
     url: String,
+    log: PathBuf,
 }
 
 impl Session {
@@ -158,7 +172,7 @@ impl Session {
             assert!(
                 Instant::now() < deadline,
                 "nothing matched `{css}` within {secs}s; the window shows:\n{}",
-                self.page_text()
+                self.report()
             );
             std::thread::sleep(Duration::from_millis(150));
         }
@@ -180,7 +194,7 @@ impl Session {
                 Instant::now() < deadline,
                 "`{css}` never read `{wanted}` within {secs}s (it read {last:?}); the window \
                  shows:\n{}",
-                self.page_text()
+                self.report()
             );
             std::thread::sleep(Duration::from_millis(150));
         }
@@ -247,12 +261,23 @@ impl Session {
             .clone()
     }
 
-    /// Everything the window shows as text, for failure messages.
+    /// Everything the window shows as text.
     pub fn page_text(&self) -> String {
         self.script("return document.body.innerText")
             .as_str()
             .unwrap_or_default()
             .to_owned()
+    }
+
+    /// For failure messages: the window's text, then the end of the app's log.
+    fn report(&self) -> String {
+        let log = std::fs::read_to_string(&self.log).unwrap_or_default();
+        let lines: Vec<&str> = log.lines().collect();
+        let tail = lines[lines.len().saturating_sub(40)..].join("\n");
+        format!(
+            "{}\n--- the end of the app's log ---\n{tail}",
+            self.page_text()
+        )
     }
 
     /// Saves a PNG of the window to `path`.

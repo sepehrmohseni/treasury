@@ -11,7 +11,7 @@ log="$(mktemp)"
 if "$@" 2>&1 | tee "$log"; then
   exit 0
 fi
-cause="$(sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -E -m1 -A25 'panicked|^error' | head -40)"
+cause="$(sed 's/\x1b\[[0-9;]*m//g' "$log" | grep -E -m1 -A60 'panicked|^error' | head -80)"
 cause="${cause//'%'/'%25'}"
 cause="${cause//$'\r'/}"
 cause="${cause//$'\n'/'%0A'}"

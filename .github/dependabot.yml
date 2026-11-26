@@ -7,6 +7,11 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+    ignore:
+      # GTK 3, which Tauri's Linux webview is built on, pins glib 0.18, so newer versions cannot
+      # be taken; updating fails every time. The advisory against 0.18 (RUSTSEC-2024-0429) is in
+      # an iterator Treasury does not use.
+      - dependency-name: glib
   - package-ecosystem: github-actions
     directory: /
     schedule:

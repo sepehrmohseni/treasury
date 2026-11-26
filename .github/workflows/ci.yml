@@ -170,6 +170,11 @@ jobs:
           cargo install --locked tauri-cli@2.12.6
           cargo install --locked tauri-driver@2.1.0
       - run: docker pull -q postgres:19.0-alpine
+      # WebKit runs each page in a bubblewrap sandbox, which needs unprivileged user namespaces.
+      # Ubuntu 24.04 runners restrict them through AppArmor, and the page then never starts.
+      # Allowing them keeps the sandbox on, as it is on users' machines.
+      - name: Let WebKit's sandbox start
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       # A failure is also posted as an annotation, so its cause shows on the run's page.
       - name: cargo xtask ci desktop
         shell: bash
