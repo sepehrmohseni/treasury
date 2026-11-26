@@ -21,6 +21,20 @@ pub mod key {
     pub const CONTROL: char = '\u{E009}';
 }
 
+/// Fetches and compiles the page's WebAssembly, and says what happened.
+const WASM_CHECK: &str = r#"
+const done = arguments[arguments.length - 1];
+const errors = (window.__startupErrors || []).join(" | ") || "none";
+const page = location.href + " \"" + document.title + "\", Tauri " + (typeof window.__TAURI__) +
+  ", startup errors: " + errors + "; ";
+const link = [...document.querySelectorAll("link")].map(l => l.href).find(h => h.endsWith(".wasm"));
+if (!link) { done(page + "no .wasm link in " + document.head.innerHTML.slice(0, 400)); return; }
+fetch(link)
+  .then(r => r.arrayBuffer())
+  .then(b => WebAssembly.compile(b).then(() => page + "compiles " + link + " (" + b.byteLength + " bytes)"))
+  .then(done, e => done(page + "fails " + link + ": " + e));
+"#;
+
 /// A running `tauri-driver`, stopped on drop.
 pub struct TauriDriver {
     child: Child,
@@ -200,6 +214,38 @@ impl Session {
         }
     }
 
+    /// Waits up to `secs` for an element matching `css` whose text contains `text`.
+    pub fn wait_item(&self, css: &str, text: &str, secs: u64) -> Element {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        loop {
+            let found = self.post(
+                "/execute/sync",
+                &json!({
+                    "script": "return [...document.querySelectorAll(arguments[0])]\
+                               .find(e => e.innerText.includes(arguments[1])) || null",
+                    "args": [css, text],
+                }),
+            );
+            if let Some(id) = found["value"][ELEMENT].as_str() {
+                return Element(id.to_owned());
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no `{css}` read `{text}` within {secs}s; the window shows:\n{}",
+                self.report()
+            );
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    }
+
+    /// Double-clicks `e`.
+    pub fn double_click(&self, e: &Element) {
+        self.script_on(
+            e,
+            "arguments[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))",
+        );
+    }
+
     /// Waits up to `secs` until `script` returns true.
     pub fn wait_script(&self, script: &str, secs: u64) {
         let deadline = Instant::now() + Duration::from_secs(secs);
@@ -269,13 +315,19 @@ impl Session {
             .to_owned()
     }
 
-    /// For failure messages: the window's text, then the end of the app's log.
+    /// For failure messages: the window's text, whether its WebAssembly compiles here, and the
+    /// end of the app's log. A blank window most often means the interface never started.
     fn report(&self) -> String {
         let log = std::fs::read_to_string(&self.log).unwrap_or_default();
         let lines: Vec<&str> = log.lines().collect();
         let tail = lines[lines.len().saturating_sub(40)..].join("\n");
+        let wasm = self.post(
+            "/execute/async",
+            &json!({ "script": WASM_CHECK, "args": [] }),
+        )["value"]
+            .to_string();
         format!(
-            "{}\n--- the end of the app's log ---\n{tail}",
+            "{}\n--- the interface's WebAssembly ---\n{wasm}\n--- the end of the app's log ---\n{tail}",
             self.page_text()
         )
     }

@@ -81,6 +81,11 @@ mod desktop {
 
         // First launch: the walkthrough is there, and the newer version is offered.
         s.wait_text(".home h1", "Connect to a database", 60);
+        // The page's own script ran (the content security policy allows it) and saw no errors.
+        assert_eq!(
+            s.script("return window.__startupErrors"),
+            serde_json::json!([])
+        );
         s.wait_text(".tour", "Your first five minutes", 10);
         s.wait_text(".statusbar .update", "Treasury 99.0.0 is available", 30);
         shot("1-home");
@@ -123,10 +128,7 @@ mod desktop {
         // Editing in place: change a cell, mark a row for deletion, read the statements, save.
         s.wait_text(".result-foot .edit-state", "can be edited", 30);
         let two = s.wait(&cell(2, 2), 10);
-        s.script_on(
-            &two,
-            "arguments[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))",
-        );
+        s.double_click(&two);
         // The editor opens with its text selected, so typing replaces it. WebDriver's own clear
         // would blur the field, which saves the edit and closes the editor.
         let input = s.wait(".cell-input", 10);
@@ -167,6 +169,54 @@ mod desktop {
         assert_eq!(s.text(&s.wait(&cell(1, 2), 10)), "deux");
         shot("7-after");
 
+        // The tree: a table double-clicked shows its rows.
+        s.click(&s.wait_item(".tree .item", "public", 10));
+        s.click(&s.wait_item(".tree .item", "Tables", 10));
+        let table = s.wait_item(".tree .item", "smoke", 10);
+        s.double_click(&table);
+        s.wait_text(".editor pre", "SELECT * FROM", 10);
+        s.wait_text(".grid table", "deux", 30);
+        shot("8-tree");
+
+        // A production connection opens read-only, refuses writes until they are unlocked, and
+        // then wants its name typed for a DELETE without WHERE.
+        s.click_css(".side-actions .btn.primary");
+        let uri = s.wait("#cf-uri", 10);
+        s.keys(
+            &uri,
+            &format!("postgres://postgres:{PASSWORD}@{host}:{port}/treasury?sslmode=disable"),
+        );
+        let name = s.wait("#cf-name", 10);
+        s.click(&name);
+        s.keys(&name, "smoke-prod");
+        let env = s.wait("#cf-env", 10);
+        s.script_on(
+            &env,
+            "arguments[0].value = 'Production'; \
+             arguments[0].dispatchEvent(new Event('change', { bubbles: true }))",
+        );
+        s.wait_text(".dialog", "Production connections open read-only", 10);
+        s.click_css(".dialog button[type=submit]");
+        s.wait_text(".toolbar .title", "smoke-prod", 30);
+        s.wait(".toolbar .badge.ro", 30);
+        shot("9-production");
+        run(&s, "DELETE FROM smoke");
+        s.wait_text(".dialog", "Unlock writes to run it", 30);
+        shot("10-refused");
+        s.click_css(".dialog .btn.primary");
+        s.wait_text(".statusbar", "Writes unlocked for 15 minutes", 30);
+        run(&s, "DELETE FROM smoke");
+        s.wait_text(".dialog", "It changes 1 row", 30);
+        let typed = s.wait("#gd-name", 10);
+        s.keys(&typed, "smoke-prod");
+        s.wait_script(
+            "return document.querySelector('.dialog .btn.primary').disabled === false",
+            10,
+        );
+        shot("11-type-the-name");
+        s.click_css(".dialog .btn.primary");
+        s.wait_text(".grid .message", "1 row changed", 30);
+
         // Tips can be put away; Settings switches the theme and brings the walkthrough back.
         s.click_css(".hint .no-tips");
         assert!(s.find(".hint").is_none());
@@ -182,10 +232,10 @@ mod desktop {
             "return document.documentElement.dataset.theme === 'dark'",
             10,
         );
-        shot("8-dark");
+        shot("12-dark");
         s.click_css(".brand .settings");
         s.wait("#st-theme", 10);
-        shot("9-settings");
+        shot("13-settings");
         s.click_css(".dialog .walkthrough");
         s.wait_text(".tour", "Your first five minutes", 10);
 

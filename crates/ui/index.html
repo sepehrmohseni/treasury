@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Treasury</title>
+<script>
+  // Errors while the interface starts, kept in the window for diagnosing a blank start (the
+  // desktop test reads them). Nothing is sent anywhere.
+  window.__startupErrors = [];
+  addEventListener("error", (e) => window.__startupErrors.push(String(e.message || e)));
+  addEventListener("unhandledrejection", (e) => window.__startupErrors.push(String(e.reason)));
+</script>
 <link data-trunk rel="rust" data-wasm-opt="z" data-wasm-opt-params="--strip-debug --strip-producers --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue" />
 <link data-trunk rel="css" href="style/app.css" />
 <link data-trunk rel="copy-dir" href="fonts" />
