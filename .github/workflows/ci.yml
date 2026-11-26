@@ -7,6 +7,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs these same checks on the tagged commit.
+  workflow_call:
 
 permissions:
   contents: read
@@ -149,7 +151,8 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev \
             libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
-            librsvg2-dev libxdo-dev webkit2gtk-driver xvfb binaryen
+            librsvg2-dev libxdo-dev webkit2gtk-driver xvfb binaryen libgl1-mesa-dri libegl1 \
+            libgbm1 fonts-dejavu-core
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
         with:
@@ -163,4 +166,13 @@ jobs:
           cargo install --locked tauri-cli@2.12.6
           cargo install --locked tauri-driver@2.1.0
       - run: docker pull -q postgres:19.0-alpine
-      - run: cargo xtask ci desktop
+      # A failure is also posted as an annotation, so its cause shows on the run's page.
+      - name: cargo xtask ci desktop
+        shell: bash
+        run: |
+          set -o pipefail
+          if cargo xtask ci desktop 2>&1 | tee desktop.log; then exit 0; fi
+          cause="$(sed 's/\x1b\[[0-9;]*m//g' desktop.log | grep -E -m1 -A25 'panicked|^error' | head -40)"
+          cause="${cause//'%'/'%25'}"; cause="${cause//$'\r'/}"; cause="${cause//$'\n'/'%0A'}"
+          echo "::error title=Desktop end-to-end test::${cause}"
+          exit 1

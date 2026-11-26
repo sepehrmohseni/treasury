@@ -9,6 +9,32 @@
 3. Push both: `git push origin main v<version>`. The `release` workflow builds, signs, publishes
    and then verifies the release.
 
+## What the release workflow does
+
+1. Checks that the tag matches the workspace version (`cargo xtask check-version`).
+2. Runs every CI check on the tagged commit, by calling `ci.yml`.
+3. Builds the desktop packages, each on its own platform:
+
+   | Platform | Runner | Packages |
+   |---|---|---|
+   | Linux x64 | ubuntu-22.04 | `.AppImage`, `.deb`, `.rpm` |
+   | Linux arm64 | ubuntu-22.04-arm | `.AppImage`, `.deb`, `.rpm` |
+   | macOS (Apple silicon and Intel) | macos-latest | `.dmg`, `.app.tar.gz` for updates |
+   | Windows x64 | windows-latest | `.msi`, `-setup.exe` |
+
+   Every package the updater installs is signed with the updater key; the signature is the
+   `.sig` file next to it.
+4. Publishes one release, marked latest, with every package, `SHA256SUMS`, a CycloneDX SBOM,
+   build provenance attestations, and `latest.json`, the feed the app's updater reads. The feed
+   is written by `cargo xtask latest-json` from the signed packages. The notes come from the
+   Conventional Commits since the previous tag (git-cliff).
+5. Downloads the published release, checks every checksum, and checks that every URL in
+   `latest.json` answers and that the latest release's feed names the new version.
+
+The app checks `releases/latest/download/latest.json` once at start unless the user turned the
+check off in Settings. It installs nothing without the user choosing "Install and restart", and
+refuses a package whose signature does not match the public key in `crates/app/tauri.conf.json`.
+
 ## Signing material
 
 The maintainer keeps the private keys and their passwords outside the repository, in
@@ -39,10 +65,14 @@ Names only; the values live in the files above.
 | `ANDROID_KEYSTORE_BASE64` | `android-release.jks.base64` | signing the APK and AAB |
 | `ANDROID_KEYSTORE_PASSWORD` | `android-keystore.password` | the same |
 
+The release workflow uses the two `TAURI_SIGNING_*` secrets and stops with an error when they
+are missing. The Android secrets are for the Android app, which is on the roadmap and not built
+yet.
+
 Optional, not set: Apple Developer ID and notarization (macOS), Apple distribution certificate
 and provisioning profile (iOS), and Windows code signing. Without them, macOS builds are signed
-ad hoc, the iOS app is not built, and Windows installers are unsigned; the download page explains
-what users see.
+ad hoc (`signingIdentity: "-"`), the iOS app is not built, and Windows installers are unsigned;
+the download page explains what users see.
 
 ## Repository settings
 

@@ -1,5 +1,5 @@
 //! Workspace tasks: `cargo xtask ci`, `cargo xtask release <version>`,
-//! `cargo xtask check-version <tag>`.
+//! `cargo xtask check-version <tag>`, `cargo xtask latest-json ...`.
 //!
 //! The same steps run locally (usually through `scripts/docker-check.sh`) and in GitHub Actions,
 //! so a green local run means the same commands pass in CI.
@@ -8,6 +8,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 mod ci;
+mod feed;
 mod release;
 mod run;
 
@@ -21,6 +22,8 @@ tasks:
   ci [--list] [STEP...]     run every check CI runs, or only the named steps
   release <version>         bump every manifest, write CHANGELOG.md, commit and tag
   check-version <tag>       fail unless <tag> (vX.Y.Z) matches every manifest version
+  latest-json <version> <dir> <base-url>
+                            write the updater feed for the signed packages in <dir>
 ";
 
 fn main() -> ExitCode {
@@ -28,6 +31,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("ci") => ci::main(&args[1..]),
         Some("release") => release::release(&args[1..]),
+        Some("latest-json") => feed::main(&args[1..]),
         Some("check-version") => release::check_version(&args[1..]),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");
