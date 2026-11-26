@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Treasury: a database client that reads your SQL before the server does</title>
-<meta name="description" content="Treasury is an open-source desktop and mobile database client. It knows which statements write, counts the rows a change would touch, and keeps production read-only until you unlock it.">
+<meta name="description" content="Treasury is an open-source database client for PostgreSQL, MySQL, MariaDB, SQL Server and MongoDB. It knows which statements write, counts the rows a change would touch, and keeps production read-only until you unlock it.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
@@ -18,6 +18,7 @@
       <span>Treasury</span>
     </a>
     <nav aria-label="Page">
+      <a href="#download">Download</a>
       <a href="#statements">How it decides</a>
       <a href="#engines">Engines</a>
       <a href="https://github.com/sepehrmohseni/treasury">Source</a>
@@ -29,9 +30,35 @@
   <section class="hero wrap">
     <h1>A database client that reads your SQL before the server does.</h1>
     <div class="hero-text">
-      <p class="lede">Treasury is an open-source desktop and mobile client for PostgreSQL, MySQL, SQL Server, MongoDB, Redis, Cassandra, Snowflake, Databricks, Oracle and Db2. It knows which statements write, counts the rows an UPDATE or DELETE would change, and keeps production read-only until you unlock it.</p>
-      <p class="status"><span class="pill">In development</span> No release yet. Version 0.1.0 comes out when the desktop app is complete. <a href="https://github.com/sepehrmohseni/treasury/commits/main">Follow the work</a></p>
+      <p class="lede">Treasury is an open-source database client for PostgreSQL, MySQL, MariaDB, SQL Server and MongoDB, for Linux, macOS and Windows. It knows which statements write, counts the rows an UPDATE or DELETE would change, and keeps production read-only until you unlock it.</p>
+      <!-- release:start -->
+      <p class="status"><span class="pill">In development</span> No release yet. <a href="https://github.com/sepehrmohseni/treasury/commits/main">Follow the work</a></p>
+      <!-- release:end -->
     </div>
+  </section>
+
+  <section class="wrap" id="download" aria-labelledby="download-title">
+    <div class="section-head">
+      <h2 id="download-title">Download</h2>
+      <p>Free, with no account. The app checks GitHub for a newer version when it starts, and you can turn that off in Settings. What is planned next is in the <a href="https://github.com/sepehrmohseni/treasury/blob/main/docs/roadmap.md">roadmap</a>.</p>
+    </div>
+    <!-- downloads:start -->
+    <p class="status">The first release is not out yet.</p>
+    <!-- downloads:end -->
+    <dl class="facts install-notes">
+      <div>
+        <dt>macOS</dt>
+        <dd>The app is not notarized by Apple yet, so macOS stops it the first time. Open it once, then choose Open Anyway in System Settings, Privacy &amp; Security.</dd>
+      </div>
+      <div>
+        <dt>Windows</dt>
+        <dd>The installers are not code-signed yet, so SmartScreen may warn you. Choose More info, then Run anyway.</dd>
+      </div>
+      <div>
+        <dt>Linux</dt>
+        <dd>Install the .deb or .rpm with your package manager, or make the AppImage executable and run it. Passwords go to the Secret Service (GNOME Keyring or KWallet).</dd>
+      </div>
+    </dl>
   </section>
 
   <section class="wrap" id="statements" aria-labelledby="statements-title">
@@ -180,7 +207,7 @@
       </div>
       <div>
         <dt>Everything else</dt>
-        <dd>No account, no analytics, no crash reports. The app's only automatic request will be an update check to GitHub, which you can turn off. This page loads nothing from other sites.</dd>
+        <dd>No account, no analytics, no crash reports. The app's only request of its own is the version check at start, to GitHub, which you can turn off in Settings. This page loads nothing from other sites.</dd>
       </div>
     </dl>
   </section>

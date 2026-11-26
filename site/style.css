@@ -368,6 +368,23 @@ table {
   color: var(--muted);
 }
 
+/* Downloads */
+
+.downloads td.size {
+  color: var(--muted);
+  font: 400 0.85rem/1.6 var(--mono);
+  white-space: nowrap;
+}
+
+.downloads a {
+  font-family: var(--mono);
+  font-size: 0.9rem;
+}
+
+.install-notes {
+  margin-top: 2rem;
+}
+
 /* Engine status */
 
 .status-table {
