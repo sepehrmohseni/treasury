@@ -118,6 +118,8 @@ impl Analyzer for MockAnalyzer {
     fn classify(&self, script: &str) -> Vec<Classified> {
         let class = if script.trim().starts_with("write") {
             StatementClass::Write
+        } else if script.trim().starts_with("ddl") {
+            StatementClass::Ddl
         } else {
             StatementClass::Read
         };
@@ -269,6 +271,12 @@ impl Execute for MockSession {
                     .boxed()
                 }
             }
+            // Like a server reporting a DDL statement: done, with a count of 0.
+            "ddl" => stream::iter([Ok(ExecEvent::ResultEnd {
+                affected: Some(0),
+                truncated: false,
+            })])
+            .boxed(),
             "denied" => fail(Error::new(
                 ErrorKind::Permission {
                     grant: Some("SELECT".into()),

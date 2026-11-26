@@ -14,12 +14,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
-use treasury_core::analyze::{CountPlan, LimitPlan};
+use treasury_core::analyze::{CountPlan, LimitPlan, StatementClass};
 use treasury_core::cache::PageStore;
 use treasury_core::config::{ConnectionConfig, ConnectionId, Engine, Environment};
 use treasury_core::cursor::{Execution, ExecutionOptions, ExecutionStatus, Window};
 use treasury_core::driver::{ConnectContext, Driver, ServerInfo, Session};
-use treasury_core::exec::{ExecEvent, ExecRequest};
+use treasury_core::exec::{ExecEvent, ExecRequest, ExecStream};
 use treasury_core::guard::{
     self, BlockReason, Confirmation, DEFAULT_COUNT_THRESHOLD, Decision, NameReason, Policy,
     UNLOCK_DURATION,
@@ -476,6 +476,7 @@ impl Runtime {
             .execute()
             .ok_or_else(|| Error::unsupported("This connection cannot run statements."))?;
         let stream = exec.execute(ExecRequest::new(text.clone())).await?;
+        let stream = only_writes_count(stream, one.statement.class);
         let store = PageStore::new(CACHE_BUDGET, self.spill_dir.clone())?;
         let max_rows = match (limit, live.session.analyzer().limit(statement, 1)) {
             (true, LimitPlan::StopFetching) => Some(self.row_limit()),
@@ -600,3 +601,22 @@ impl Runtime {
 
 #[cfg(test)]
 mod tests;
+
+/// Drivers report a count of 0 for statements that change no rows by nature (`CREATE TABLE`,
+/// `SET`), the same as for an `UPDATE` that matched nothing. Only statements that may write rows
+/// keep their count, so the others read as done rather than as "0 rows changed".
+fn only_writes_count(stream: ExecStream, class: StatementClass) -> ExecStream {
+    use futures::StreamExt;
+    if matches!(class, StatementClass::Write | StatementClass::Unknown) {
+        return stream;
+    }
+    stream
+        .map(|event| match event {
+            Ok(ExecEvent::ResultEnd { truncated, .. }) => Ok(ExecEvent::ResultEnd {
+                affected: None,
+                truncated,
+            }),
+            other => other,
+        })
+        .boxed()
+}

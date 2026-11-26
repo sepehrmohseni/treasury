@@ -187,3 +187,18 @@ async fn cancel_stops_a_running_statement() {
     let status = finish(&f.rt, rid).await;
     assert!(status.error.is_some());
 }
+
+#[tokio::test]
+async fn only_writes_report_rows_changed() {
+    let f = runtime();
+    let c = open(&f.rt, Environment::Local).await;
+    for (statement, affected) in [("ddl", None), ("write 1", Some(1))] {
+        let p = f.rt.prepare(&c.id, statement).await.unwrap();
+        let rid =
+            f.rt.run(&c.id, statement, p.token, None, true)
+                .await
+                .unwrap();
+        let status = finish(&f.rt, rid).await;
+        assert_eq!(status.sets[0].affected, affected, "{statement}");
+    }
+}
