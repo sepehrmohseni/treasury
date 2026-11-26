@@ -1,0 +1,28 @@
+[package]
+name = "treasury-cli"
+description = "The treasury command-line tool: classify statements, parse connection strings, import"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "treasury"
+path = "src/main.rs"
+
+[dependencies]
+treasury-core.workspace = true
+treasury-sql.workspace = true
+treasury-import.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+clap = { version = "4.6.10", features = ["derive"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
