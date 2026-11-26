@@ -97,4 +97,13 @@ jobs:
       - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
         with:
           tool: cargo-nextest@0.9.152
+      # The database images are large; pulling them up front keeps the tests' own time limits
+      # about the tests. The tests pull anything missing themselves.
+      - name: Pull test images
+        run: |
+          for image in postgres:19.0-alpine mysql:9.7.0 mariadb:12.3.2 \
+            mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04; do
+            docker pull -q "$image" &
+          done
+          wait
       - run: cargo xtask ci integration

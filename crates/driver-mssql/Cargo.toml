@@ -1,0 +1,27 @@
+[package]
+name = "treasury-driver-mssql"
+description = "SQL Server driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+treasury-core.workspace = true
+treasury-sql.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+secrecy.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["net", "sync", "time", "rt", "macros"] }
+tokio-util = { version = "0.7.18", features = ["compat"] }
+# tiberius 0.13 hard-codes the aws-lc provider; this continuation takes the process default (ring).
+tiberius = { package = "tiberius-ng", version = "0.13.2", default-features = false, features = ["rustls-no-provider", "tds80", "tds73"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+quick-xml = "0.42.0"
+
+[lints]
+workspace = true
