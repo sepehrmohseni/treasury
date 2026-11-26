@@ -1,5 +1,7 @@
 # 0002: IPC types reach TypeScript through ts-rs
 
+Superseded by [0011](0011-ui-in-rust-with-leptos.md): the interface is written in Rust.
+
 ## Context
 
 The UI and the Rust core must not drift apart: every type that crosses the Tauri IPC boundary

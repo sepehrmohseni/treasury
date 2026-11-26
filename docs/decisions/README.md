@@ -7,7 +7,7 @@ as superseded and link the one that replaces it.
 | No. | Decision |
 |---|---|
 | [0001](0001-panic-unwind.md) | Release builds unwind on panic |
-| [0002](0002-ts-rs-bindings.md) | IPC types reach TypeScript through ts-rs |
+| [0002](0002-ts-rs-bindings.md) | IPC types reach TypeScript through ts-rs (superseded by 0011) |
 | [0003](0003-checks-through-xtask.md) | Every check is a `cargo xtask ci` step, run in a pinned image |
 | [0004](0004-history-encryption-and-search.md) | Query text is sealed at rest; history search indexes in memory |
 | [0005](0005-limit-rewrite-verified-by-reparse.md) | The row limit is inserted into the user's text and verified by parsing again |
@@ -16,3 +16,4 @@ as superseded and link the one that replaces it.
 | [0008](0008-mysql-on-mysql-async.md) | MySQL and MariaDB use mysql_async, prepared first, with the system's roots added |
 | [0009](0009-sql-server-on-tiberius-ng.md) | SQL Server uses tiberius-ng; read-only is enforced by the guardrails |
 | [0010](0010-mongodb-commands-and-results.md) | MongoDB speaks database commands; results keep every field |
+| [0011](0011-ui-in-rust-with-leptos.md) | The interface is written in Rust with Leptos, inside Tauri |
