@@ -4,10 +4,19 @@ name: Release
 # manifests, runs every CI check, builds and signs the desktop packages on each platform, and
 # publishes one release with all of them, their checksums, an SBOM and the updater feed. A last
 # job downloads the published release and checks it.
+#
+# A push to main that changes how releases are built runs the package builds alone, as a dry
+# run: nothing is signed or published, and the packages stay with the run for a week.
 
 on:
   push:
     tags: ["v*.*.*"]
+    branches: [main]
+    # Only for branch pushes; GitHub does not apply path filters to tags.
+    paths:
+      - .github/workflows/release.yml
+      - crates/app/tauri.conf.json
+      - crates/app/Cargo.toml
 
 permissions:
   contents: read
@@ -23,6 +32,7 @@ env:
 jobs:
   version:
     name: tag matches the manifests
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -36,11 +46,14 @@ jobs:
   checks:
     name: every CI check
     needs: version
+    if: startsWith(github.ref, 'refs/tags/')
     uses: ./.github/workflows/ci.yml
 
   build:
     name: packages (${{ matrix.name }})
-    needs: checks
+    needs: [version, checks]
+    # On a tag both must pass; on a dry run both are skipped.
+    if: ${{ !failure() && !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -96,14 +109,20 @@ jobs:
       - name: Build and sign
         shell: bash
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Only a tagged build gets the key; a dry run builds unsigned.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ github.ref_type == 'tag' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ github.ref_type == 'tag' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
+          cd crates/app
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            cargo tauri build --ci --target "${{ matrix.target }}" --bundles "${{ matrix.bundles }}" \
+              --config '{"bundle":{"createUpdaterArtifacts":false}}'
+            exit 0
+          fi
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "::error::The TAURI_SIGNING_PRIVATE_KEY secret is not set; update packages cannot be signed."
             exit 1
           fi
-          cd crates/app
           cargo tauri build --ci --target "${{ matrix.target }}" --bundles "${{ matrix.bundles }}"
       - name: Collect the packages
         shell: bash
@@ -127,10 +146,12 @@ jobs:
           name: packages-${{ matrix.name }}
           path: out/
           if-no-files-found: error
+          retention-days: 7
 
   publish:
     name: publish the release
     needs: build
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -179,6 +200,7 @@ jobs:
   verify:
     name: check the published release
     needs: publish
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     steps:
       - name: Download every asset and check the checksums and the update feed
