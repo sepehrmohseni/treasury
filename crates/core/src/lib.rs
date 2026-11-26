@@ -14,6 +14,7 @@ pub mod exec;
 pub mod format;
 pub mod guard;
 pub mod health;
+pub mod json;
 pub mod plan;
 pub mod schema;
 pub mod task;
