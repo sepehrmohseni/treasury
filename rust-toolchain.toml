@@ -1,0 +1,6 @@
+# One Rust release for every build: local, Docker, CI and release. Move it forward on purpose,
+# together with RUST_IMAGE in docker/ci/Dockerfile.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

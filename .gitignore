@@ -1,0 +1,14 @@
+/target/
+node_modules/
+/ui/dist/
+/ui/test-results/
+/ui/playwright-report/
+/site/book/
+/site/dist/
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+*.profraw
+*.profdata
+.DS_Store
+Thumbs.db

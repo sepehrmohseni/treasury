@@ -1,0 +1,39 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.100"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/sepehrmohseni/treasury"
+homepage = "https://sepehrmohseni.github.io/treasury/"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "warn"
+print_stderr = "warn"
+
+# Driver tasks must unwind so that a panic becomes an error for one request instead of ending the
+# process.
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = "symbols"
+panic = "unwind"
+
+[profile.dev]
+debug = "line-tables-only"
