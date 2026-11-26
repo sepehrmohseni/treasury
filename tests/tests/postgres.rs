@@ -345,6 +345,7 @@ mod docker {
         ddl_round_trips(s.as_ref()).await;
         tree_pages_and_filters(s.as_ref()).await;
         edits_are_atomic(s.as_ref()).await;
+        rows_are_found_by_their_key(s.as_ref()).await;
         edits_join_an_open_transaction(&pg).await;
         plans_are_trees(s.as_ref()).await;
         a_finished_statement_leaves_no_timer(s.as_ref()).await;
@@ -768,5 +769,42 @@ mod docker {
                 grant: "pg_read_all_stats".into()
             }
         );
+    }
+
+    /// The key the grid identifies rows by: the primary key, else a unique key without NULLs.
+    async fn rows_are_found_by_their_key(s: &dyn Session) {
+        for sql in [
+            "CREATE TABLE k_pk (a int, b int, c int UNIQUE NOT NULL, PRIMARY KEY (b, a))",
+            "CREATE TABLE k_unique (x int NOT NULL, y int, UNIQUE (x))",
+            "CREATE TABLE k_nullable (x int UNIQUE)",
+            "CREATE TABLE k_partial (x int NOT NULL)",
+            "CREATE UNIQUE INDEX ON k_partial (x) WHERE x > 0",
+            "CREATE TABLE k_none (x int)",
+            "CREATE SCHEMA keys",
+            "CREATE TABLE keys.k_pk (id int PRIMARY KEY)",
+        ] {
+            run(s, sql).await.unwrap();
+        }
+        let edit = s.edit().unwrap();
+        let key = |schema: Option<&str>, table: &str| {
+            let t = TableRef {
+                schema: schema.map(str::to_owned),
+                table: table.to_owned(),
+            };
+            async move { edit.row_key(&t).await.unwrap() }
+        };
+        assert_eq!(key(None, "k_pk").await, vec!["b", "a"]);
+        assert_eq!(key(None, "k_unique").await, vec!["x"]);
+        assert!(key(None, "k_nullable").await.is_empty());
+        assert!(key(None, "k_partial").await.is_empty());
+        assert!(key(None, "k_none").await.is_empty());
+        assert!(key(None, "no_such_table").await.is_empty());
+        assert_eq!(key(Some("keys"), "k_pk").await, vec!["id"]);
+        for sql in [
+            "DROP TABLE k_pk, k_unique, k_nullable, k_partial, k_none",
+            "DROP SCHEMA keys CASCADE",
+        ] {
+            run(s, sql).await.unwrap();
+        }
     }
 }

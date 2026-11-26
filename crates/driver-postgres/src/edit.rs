@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::types::ToSql;
 use treasury_core::driver::{Edit, SqlDialect};
-use treasury_core::edit::{Changeset, RowChange};
+use treasury_core::edit::{Changeset, RowChange, TableRef};
 use treasury_core::{Error, ErrorKind, Result, Value};
 use treasury_sql::render;
 
@@ -201,12 +201,40 @@ impl Edit for PgSession {
             _ => result,
         }
     }
+
+    async fn row_key(&self, table: &TableRef) -> Result<Vec<String>> {
+        self.alive()?;
+        let name = render::table(D, table.schema.as_deref(), &table.table);
+        // to_regclass resolves an unqualified name through the session's search_path. Partial
+        // and expression indexes cannot identify a row; a unique key with a nullable column
+        // can match several rows that are all NULL there.
+        let rows = self
+            .client
+            .query(
+                "SELECT i.indisprimary, bool_and(a.attnotnull), \
+                        array_agg(a.attname::text ORDER BY k.ord) \
+                 FROM pg_index i \
+                 CROSS JOIN LATERAL unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord) \
+                 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum \
+                 WHERE i.indrelid = to_regclass($1) AND i.indisunique \
+                   AND i.indpred IS NULL AND i.indexprs IS NULL \
+                 GROUP BY i.indexrelid, i.indisprimary \
+                 ORDER BY i.indisprimary DESC, count(*), i.indexrelid",
+                &[&name],
+            )
+            .await
+            .map_err(|e| self.map(&e))?;
+        Ok(rows
+            .iter()
+            .find(|r| r.get::<_, bool>(0) || r.get::<_, bool>(1))
+            .map(|r| r.get::<_, Vec<String>>(2))
+            .unwrap_or_default())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use treasury_core::edit::TableRef;
 
     fn changes(list: Vec<RowChange>) -> Changeset {
         Changeset {

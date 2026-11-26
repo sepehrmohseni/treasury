@@ -4,7 +4,7 @@
 
 use crate::analyze::Analyzer;
 use crate::config::{ConnectionConfig, Engine, SecretSlot};
-use crate::edit::Changeset;
+use crate::edit::{Changeset, TableRef};
 use crate::error::Result;
 use crate::exec::{ExecRequest, ExecStream};
 use crate::health::{Metric, MetricSet};
@@ -256,4 +256,9 @@ pub trait Edit: Send + Sync {
 
     /// Applies `changes` in one transaction and returns the rows affected.
     async fn apply(&self, changes: &Changeset) -> Result<u64>;
+
+    /// The columns that identify one row of `table`: its primary key, or else a unique key
+    /// whose columns are all NOT NULL. Empty when it has neither. An unqualified name is
+    /// resolved the way the server resolves it for this session.
+    async fn row_key(&self, table: &TableRef) -> Result<Vec<String>>;
 }

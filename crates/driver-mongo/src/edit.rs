@@ -7,7 +7,7 @@ use crate::value::to_bson;
 use async_trait::async_trait;
 use mongodb::bson::{Bson, Document, doc};
 use treasury_core::driver::Edit;
-use treasury_core::edit::{Changeset, RowChange};
+use treasury_core::edit::{Changeset, RowChange, TableRef};
 use treasury_core::{Error, ErrorKind, Result};
 
 /// MongoDB's "transactions need a replica set" error.
@@ -165,13 +165,17 @@ impl Edit for MongoSession {
         }
         Ok(total)
     }
+
+    async fn row_key(&self, _table: &TableRef) -> Result<Vec<String>> {
+        // Every document has `_id`, and it is always unique.
+        Ok(vec!["_id".to_owned()])
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use treasury_core::Value;
-    use treasury_core::edit::TableRef;
 
     #[test]
     fn edits_become_commands() {

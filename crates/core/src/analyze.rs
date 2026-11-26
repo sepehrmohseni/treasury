@@ -2,6 +2,7 @@
 //! rows, how to count the rows it would change. Each query language implements [`Analyzer`]:
 //! the SQL dialects in `treasury-sql`, MongoDB, Redis and CQL in their drivers.
 
+use crate::edit::TableRef;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
@@ -149,6 +150,63 @@ pub trait Analyzer: Send + Sync {
 
     /// The bind placeholders in `statement`, in order.
     fn placeholders(&self, statement: &str) -> Vec<Placeholder>;
+
+    /// The table behind `statement`'s result, when its rows can be edited in place. The error is
+    /// the reason they cannot, written for the user.
+    fn edit_source(&self, statement: &str) -> Result<EditSource, String> {
+        let _ = statement;
+        Err("Results of this language cannot be edited in place yet.".to_owned())
+    }
+}
+
+/// What one item of a SELECT list is, for mapping result columns back to the table.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Projected {
+    /// A column of the table, by its name in the table.
+    Column(String),
+    /// Anything computed: it fills one result column that cannot be edited.
+    Expression,
+    /// `*`: every column of the table, each under its own name.
+    AllColumns,
+}
+
+/// The single table a result reads from, and what each SELECT item is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditSource {
+    /// The table.
+    pub table: TableRef,
+    /// The SELECT list, in order.
+    pub items: Vec<Projected>,
+}
+
+impl EditSource {
+    /// The table column behind each result column (`None` for computed ones), given the result's
+    /// column names. `None` when the two cannot be lined up.
+    pub fn columns(&self, result: &[String]) -> Option<Vec<Option<String>>> {
+        let stars = self
+            .items
+            .iter()
+            .filter(|i| **i == Projected::AllColumns)
+            .count();
+        let fixed = self.items.len() - stars;
+        let star_width = match stars {
+            0 if result.len() == fixed => 0,
+            1 if result.len() >= fixed => result.len() - fixed,
+            _ => return None,
+        };
+        let mut out = Vec::with_capacity(result.len());
+        for item in &self.items {
+            match item {
+                Projected::Column(c) => out.push(Some(c.clone())),
+                Projected::Expression => out.push(None),
+                Projected::AllColumns => {
+                    let at = out.len();
+                    out.extend(result[at..at + star_width].iter().cloned().map(Some));
+                }
+            }
+        }
+        Some(out)
+    }
 }
 
 /// The most dangerous class in a script; an empty script reads nothing.
@@ -163,6 +221,37 @@ pub fn script_class(statements: &[Classified]) -> StatementClass {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn names(n: &[&str]) -> Vec<String> {
+        n.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn result_columns_line_up_with_the_select_list() {
+        let src = EditSource {
+            table: TableRef {
+                schema: None,
+                table: "t".into(),
+            },
+            items: vec![
+                Projected::Column("id".into()),
+                Projected::AllColumns,
+                Projected::Expression,
+            ],
+        };
+        let cols = src.columns(&names(&["key", "a", "b", "upper"])).unwrap();
+        assert_eq!(
+            cols,
+            vec![Some("id".into()), Some("a".into()), Some("b".into()), None]
+        );
+        // Fewer result columns than fixed items: the result is not this SELECT.
+        assert!(src.columns(&names(&["id"])).is_none());
+        let two_stars = EditSource {
+            items: vec![Projected::AllColumns, Projected::AllColumns],
+            ..src
+        };
+        assert!(two_stars.columns(&names(&["a", "b"])).is_none());
+    }
 
     fn st(class: StatementClass) -> Classified {
         Classified {

@@ -6,6 +6,7 @@
 pub mod classify;
 mod count;
 pub mod dialect;
+mod edit;
 mod functions;
 pub mod highlight;
 mod limit;
@@ -18,7 +19,8 @@ use dialect::{Rules, parser_dialect, rules};
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::Token;
 use treasury_core::analyze::{
-    Analyzer, Classified, CountPlan, Destructive, LimitPlan, Placeholder, StatementClass,
+    Analyzer, Classified, CountPlan, Destructive, EditSource, LimitPlan, Placeholder,
+    StatementClass,
 };
 use treasury_core::driver::SqlDialect;
 
@@ -185,6 +187,10 @@ impl Analyzer for SqlAnalyzer {
 
     fn count(&self, statement: &str) -> CountPlan {
         count::plan(&self.rules, statement)
+    }
+
+    fn edit_source(&self, statement: &str) -> Result<EditSource, String> {
+        edit::source(&self.rules, statement)
     }
 
     fn placeholders(&self, statement: &str) -> Vec<Placeholder> {

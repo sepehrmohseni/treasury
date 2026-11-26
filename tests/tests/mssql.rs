@@ -368,6 +368,7 @@ mod docker {
         ddl_round_trips(s.as_ref()).await;
         tree_pages(s.as_ref()).await;
         edits(&ms, s.as_ref()).await;
+        rows_are_found_by_their_key(s.as_ref()).await;
 
         let ex = s.explain().unwrap();
         let plan = ex
@@ -637,5 +638,41 @@ mod docker {
                 .unwrap(),
             vec![vec![Value::Text("uno".into())]]
         );
+    }
+
+    /// The key the grid identifies rows by: the primary key, else a unique key without NULLs.
+    async fn rows_are_found_by_their_key(s: &dyn Session) {
+        for sql in [
+            "CREATE TABLE k_pk (a int NOT NULL, b int NOT NULL, c int NOT NULL UNIQUE, \
+             PRIMARY KEY (b, a))",
+            "CREATE TABLE k_unique (x int NOT NULL, y int, UNIQUE (x))",
+            "CREATE TABLE k_nullable (x int UNIQUE)",
+            "CREATE TABLE k_filtered (x int NOT NULL)",
+            "CREATE UNIQUE INDEX k_filtered_x ON k_filtered (x) WHERE x > 0",
+            "CREATE TABLE k_none (x int)",
+        ] {
+            run(s, sql).await.unwrap();
+        }
+        let edit = s.edit().unwrap();
+        let key = |schema: Option<&str>, table: &str| {
+            let t = TableRef {
+                schema: schema.map(str::to_owned),
+                table: table.to_owned(),
+            };
+            async move { edit.row_key(&t).await.unwrap() }
+        };
+        assert_eq!(key(None, "k_pk").await, vec!["b", "a"]);
+        assert_eq!(key(Some("dbo"), "k_pk").await, vec!["b", "a"]);
+        assert_eq!(key(None, "k_unique").await, vec!["x"]);
+        assert!(key(None, "k_nullable").await.is_empty());
+        assert!(key(None, "k_filtered").await.is_empty());
+        assert!(key(None, "k_none").await.is_empty());
+        assert!(key(None, "no_such_table").await.is_empty());
+        run(
+            s,
+            "DROP TABLE k_pk, k_unique, k_nullable, k_filtered, k_none",
+        )
+        .await
+        .unwrap();
     }
 }

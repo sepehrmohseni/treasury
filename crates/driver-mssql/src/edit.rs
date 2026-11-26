@@ -1,12 +1,12 @@
 //! Row edits from the grid, applied in one transaction with bind parameters. When the user has
 //! a transaction open (`@@TRANCOUNT` above zero), the edits join it under a savepoint.
 
-use crate::session::{MsSqlSession, int};
+use crate::session::{MsSqlSession, cell, int};
 use crate::{error, value};
 use async_trait::async_trait;
 use tiberius::ToSql;
 use treasury_core::driver::{Edit, SqlDialect};
-use treasury_core::edit::{Changeset, RowChange};
+use treasury_core::edit::{Changeset, RowChange, TableRef};
 use treasury_core::{Error, ErrorKind, Result, Value};
 use treasury_sql::render;
 
@@ -192,12 +192,49 @@ impl Edit for MsSqlSession {
             (_, r) => r,
         }
     }
+
+    async fn row_key(&self, table: &TableRef) -> Result<Vec<String>> {
+        // OBJECT_ID resolves an unqualified name through the user's default schema. Filtered
+        // indexes cover only some rows, and a nullable key column lets rows share the key.
+        let name = render::table(D, table.schema.as_deref(), &table.table);
+        let rows = self
+            .meta(
+                "SELECT i.name, CAST(i.is_primary_key AS int), c.name, CAST(c.is_nullable AS int) \
+                 FROM sys.indexes i \
+                 JOIN sys.index_columns ic \
+                   ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
+                 JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id \
+                 WHERE i.object_id = OBJECT_ID(@P1) AND i.is_unique = 1 \
+                   AND i.has_filter = 0 AND ic.is_included_column = 0 \
+                 ORDER BY i.is_primary_key DESC, i.index_id, ic.key_ordinal",
+                &[&name.as_str()],
+            )
+            .await?;
+        let mut keys: Vec<(String, bool, Vec<String>, bool)> = Vec::new();
+        for row in &rows {
+            let index = cell(row, 0).unwrap_or_default();
+            let primary = int(row, 1) == Some(1);
+            let column = cell(row, 2).unwrap_or_default();
+            let nullable = int(row, 3) == Some(1);
+            match keys.last_mut() {
+                Some((name, _, cols, any_null)) if *name == index => {
+                    cols.push(column);
+                    *any_null |= nullable;
+                }
+                _ => keys.push((index, primary, vec![column], nullable)),
+            }
+        }
+        Ok(keys
+            .into_iter()
+            .find(|(_, primary, _, any_null)| *primary || !any_null)
+            .map(|(_, _, cols, _)| cols)
+            .unwrap_or_default())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use treasury_core::edit::TableRef;
 
     #[test]
     fn statements_bind_values() {

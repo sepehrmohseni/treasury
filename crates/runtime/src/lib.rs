@@ -106,6 +106,7 @@ pub struct Running {
     pub text: String,
     started: Instant,
     recorded: Mutex<bool>,
+    edit_target: Mutex<Option<edit::Target>>,
 }
 
 /// The runtime: connections, guardrails and running statements.
@@ -502,6 +503,7 @@ impl Runtime {
                     text,
                     started: Instant::now(),
                     recorded: Mutex::new(false),
+                    edit_target: Mutex::new(None),
                 }),
             );
         Ok(rid)
@@ -598,6 +600,8 @@ impl Runtime {
         Ok(self.live(id).await?.session.analyzer().count(statement))
     }
 }
+
+mod edit;
 
 #[cfg(test)]
 mod tests;

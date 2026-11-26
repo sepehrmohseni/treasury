@@ -172,3 +172,34 @@ pub struct HostKeyQuestion {
     /// The SHA-256 fingerprint as OpenSSH prints it.
     pub fingerprint: String,
 }
+
+/// A new value for one cell of a result, as the grid collects it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellEdit {
+    /// The row's index in the result.
+    pub row: u64,
+    /// The column's index in the result.
+    pub column: usize,
+    /// The text typed, or `None` for NULL.
+    pub value: Option<String>,
+}
+
+/// The edits pending on one result set.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RowEdits {
+    /// Changed cells, oldest first.
+    pub cells: Vec<CellEdit>,
+    /// Rows to delete, by index.
+    pub deletes: Vec<u64>,
+}
+
+/// Whether a result set's rows can be edited.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditInfo {
+    /// The table the rows belong to, when they can be edited.
+    pub table: Option<String>,
+    /// Which result columns can be edited, in order.
+    pub columns: Vec<bool>,
+    /// Why the rows cannot be edited, when they cannot.
+    pub reason: Option<String>,
+}

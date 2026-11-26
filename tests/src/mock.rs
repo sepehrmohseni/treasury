@@ -3,22 +3,27 @@
 //! It understands a few commands: `rows N` (N integers counting from 1, produced lazily),
 //! `sleep S` (cancellable), `syntax` (a syntax error at position 3), `write` (refused while
 //! read-only), `denied` (a permission error) and `types` (one row of assorted values).
+//!
+//! The rows of `rows N` come from a table `numbers` keyed by its column `n`, so they can be
+//! edited; applied changes are kept for the test to read back.
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use tokio::sync::Notify;
 use treasury_core::analyze::{
-    Analyzer, Classified, CountPlan, Flags, LimitPlan, Placeholder, StatementClass,
+    Analyzer, Classified, CountPlan, EditSource, Flags, LimitPlan, Placeholder, Projected,
+    StatementClass,
 };
 use treasury_core::config::{ConnectionConfig, Endpoint, Engine, SecretSlot};
 use treasury_core::driver::{
-    Cancel, CancelMethod, Capabilities, ConnectContext, Driver, Execute, Introspect, QueryLanguage,
-    ReadOnlyEnforcement, ServerInfo, Session, SqlDialect,
+    Cancel, CancelMethod, Capabilities, ConnectContext, Driver, Edit, Execute, Introspect,
+    QueryLanguage, ReadOnlyEnforcement, ServerInfo, Session, SqlDialect,
 };
+use treasury_core::edit::{Changeset, TableRef};
 use treasury_core::error::ServerMessage;
 use treasury_core::exec::{Column, ExecEvent, ExecRequest, ExecStream, ValueKind};
 use treasury_core::schema::{
@@ -34,6 +39,7 @@ pub const PASSWORD: &str = "right";
 #[derive(Default)]
 pub struct MockServer {
     generation: AtomicU64,
+    applied: Mutex<Vec<Changeset>>,
 }
 
 /// The mock driver.
@@ -46,6 +52,15 @@ impl MockDriver {
     /// Simulates a server restart: every open session loses its connection.
     pub fn restart(&self) {
         self.server.generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Every changeset applied so far, oldest first.
+    pub fn applied(&self) -> Vec<Changeset> {
+        self.server
+            .applied
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -140,6 +155,19 @@ impl Analyzer for MockAnalyzer {
     fn placeholders(&self, _: &str) -> Vec<Placeholder> {
         Vec::new()
     }
+    fn edit_source(&self, statement: &str) -> std::result::Result<EditSource, String> {
+        if statement.trim().starts_with("rows") {
+            Ok(EditSource {
+                table: TableRef {
+                    schema: None,
+                    table: "numbers".into(),
+                },
+                items: vec![Projected::Column("n".into())],
+            })
+        } else {
+            Err("Only `rows N` can be edited.".into())
+        }
+    }
 }
 
 #[async_trait]
@@ -152,7 +180,7 @@ impl Session for MockSession {
             explain: None,
             cancel: CancelMethod::Native,
             health: false,
-            edit: false,
+            edit: true,
             transactions: false,
             read_only: ReadOnlyEnforcement::Server,
             multiple_results: false,
@@ -193,6 +221,10 @@ impl Session for MockSession {
     }
 
     fn cancel(&self) -> Option<&dyn Cancel> {
+        Some(self)
+    }
+
+    fn edit(&self) -> Option<&dyn Edit> {
         Some(self)
     }
 
@@ -366,5 +398,39 @@ impl Introspect for MockSession {
 
     async fn ddl(&self, _: &ObjectPath) -> Result<Option<String>> {
         Ok(None)
+    }
+}
+
+#[async_trait]
+impl Edit for MockSession {
+    fn render(&self, changes: &Changeset) -> Result<Vec<String>> {
+        changes.validate()?;
+        Ok(changes.changes.iter().map(|c| format!("{c:?}")).collect())
+    }
+
+    async fn apply(&self, changes: &Changeset) -> Result<u64> {
+        self.alive()?;
+        changes.validate()?;
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(Error::new(
+                ErrorKind::ReadOnly,
+                "cannot execute in a read-only transaction",
+            ));
+        }
+        self.server
+            .applied
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(changes.clone());
+        Ok(changes.changes.len() as u64)
+    }
+
+    async fn row_key(&self, table: &TableRef) -> Result<Vec<String>> {
+        self.alive()?;
+        Ok(if table.table == "numbers" {
+            vec!["n".into()]
+        } else {
+            Vec::new()
+        })
     }
 }

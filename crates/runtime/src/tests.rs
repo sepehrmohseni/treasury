@@ -4,6 +4,8 @@ use super::*;
 use async_trait::async_trait;
 use treasury_core::analyze::StatementClass;
 use treasury_core::config::Engine;
+use treasury_core::edit::RowChange;
+use treasury_ipc::{CellEdit, RowEdits};
 use treasury_tests::mock::{MockDriver, PASSWORD};
 use treasury_vault::{MemoryStore, Sealer};
 
@@ -18,6 +20,7 @@ impl HostKeyPrompt for Deny {
 
 struct Fixture {
     rt: Runtime,
+    driver: MockDriver,
     _dir: tempfile::TempDir,
 }
 
@@ -26,15 +29,20 @@ fn runtime() -> Fixture {
     let store =
         Arc::new(Store::open_in_memory(Sealer::new(zeroize::Zeroizing::new([7u8; 32]))).unwrap());
     let secrets: Arc<dyn SecretStore> = Arc::new(MemoryStore::default());
+    let driver = MockDriver::default();
     let rt = Runtime::new(
         store,
         secrets,
-        vec![Arc::new(MockDriver::default())],
+        vec![Arc::new(driver.clone())],
         KnownHosts::new(dir.path().join("known_hosts")),
         Arc::new(Deny),
         dir.path().to_path_buf(),
     );
-    Fixture { rt, _dir: dir }
+    Fixture {
+        rt,
+        driver,
+        _dir: dir,
+    }
 }
 
 async fn open(rt: &Runtime, env: Environment) -> ConnectionConfig {
@@ -201,4 +209,113 @@ async fn only_writes_report_rows_changed() {
         let status = finish(&f.rt, rid).await;
         assert_eq!(status.sets[0].affected, affected, "{statement}");
     }
+}
+
+/// Runs `statement` to its end and returns the result's id.
+async fn run_all(f: &Fixture, c: &ConnectionConfig, statement: &str) -> u64 {
+    let p = f.rt.prepare(&c.id, statement).await.unwrap();
+    let rid =
+        f.rt.run(&c.id, statement, p.token, None, true)
+            .await
+            .unwrap();
+    finish(&f.rt, rid).await;
+    rid
+}
+
+fn cell(row: u64, value: Option<&str>) -> CellEdit {
+    CellEdit {
+        row,
+        column: 0,
+        value: value.map(str::to_owned),
+    }
+}
+
+#[tokio::test]
+async fn edits_reach_rows_by_the_key_the_server_sent() {
+    let f = runtime();
+    let c = open(&f.rt, Environment::Development).await;
+    let rid = run_all(&f, &c, "rows 5").await;
+    let info = f.rt.edit_info(rid, 0).await.unwrap();
+    assert_eq!(info.table.as_deref(), Some("numbers"));
+    assert_eq!(info.columns, vec![true]);
+
+    // Row 1 holds n = 2, row 3 holds n = 4. The second edit of a cell replaces the first, and a
+    // row that is deleted needs no update.
+    let edits = RowEdits {
+        cells: vec![
+            cell(1, Some("20")),
+            cell(1, Some("22")),
+            cell(3, Some("40")),
+            cell(4, None),
+        ],
+        deletes: vec![3, 3],
+    };
+    assert_eq!(f.rt.edit_review(rid, 0, &edits).await.unwrap().len(), 3);
+    assert_eq!(f.rt.edit_apply(rid, 0, &edits).await.unwrap(), 3);
+    let applied = f.driver.applied();
+    assert_eq!(applied.len(), 1);
+    assert_eq!(applied[0].key_columns, vec!["n".to_owned()]);
+    assert_eq!(
+        applied[0].changes,
+        vec![
+            RowChange::Update {
+                key: vec![Value::I64(2)],
+                set: vec![("n".into(), Value::I64(22))],
+            },
+            RowChange::Update {
+                key: vec![Value::I64(5)],
+                set: vec![("n".into(), Value::Null)],
+            },
+            RowChange::Delete {
+                key: vec![Value::I64(4)],
+            },
+        ]
+    );
+
+    let typo = RowEdits {
+        cells: vec![cell(0, Some("two"))],
+        deletes: Vec::new(),
+    };
+    let err = f.rt.edit_apply(rid, 0, &typo).await.unwrap_err();
+    assert!(matches!(err.kind, ErrorKind::Config { .. }), "{err:?}");
+    assert!(f.rt.edit_apply(rid, 0, &RowEdits::default()).await.is_err());
+    assert_eq!(f.driver.applied().len(), 1, "nothing more was applied");
+}
+
+#[tokio::test]
+async fn production_edits_wait_for_unlocked_writes() {
+    let f = runtime();
+    let c = open(&f.rt, Environment::Production).await;
+    let rid = run_all(&f, &c, "rows 3").await;
+    let edits = RowEdits {
+        cells: vec![cell(0, Some("9"))],
+        deletes: Vec::new(),
+    };
+    let err = f.rt.edit_apply(rid, 0, &edits).await.unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Guard);
+    assert!(f.driver.applied().is_empty());
+    f.rt.unlock_writes(&c.id).await.unwrap();
+    assert_eq!(f.rt.edit_apply(rid, 0, &edits).await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn results_the_analyzer_cannot_place_say_why() {
+    let f = runtime();
+    let c = open(&f.rt, Environment::Local).await;
+    let rid = run_all(&f, &c, "types").await;
+    let info = f.rt.edit_info(rid, 0).await.unwrap();
+    assert!(info.table.is_none());
+    assert!(info.reason.is_some_and(|r| r.contains("rows N")));
+    let err =
+        f.rt.edit_apply(
+            rid,
+            0,
+            &RowEdits {
+                cells: vec![cell(0, Some("x"))],
+                deletes: Vec::new(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Guard);
 }

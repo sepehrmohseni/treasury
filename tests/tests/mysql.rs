@@ -347,6 +347,7 @@ mod docker {
         ddl_round_trips(s.as_ref()).await;
         tree_pages_and_filters(s.as_ref()).await;
         edits_are_atomic(s.as_ref()).await;
+        rows_are_found_by_their_key(s.as_ref()).await;
         edits_join_an_open_transaction(&my).await;
         plans_are_trees(s.as_ref()).await;
         a_finished_statement_leaves_no_timer(s.as_ref()).await;
@@ -710,5 +711,33 @@ mod docker {
                 grant: "PROCESS".into()
             }
         );
+    }
+
+    /// The key the grid identifies rows by: the primary key, else a unique key without NULLs.
+    async fn rows_are_found_by_their_key(s: &dyn Session) {
+        for sql in [
+            "CREATE TABLE k_pk (a int, b int, c int NOT NULL UNIQUE, PRIMARY KEY (b, a))",
+            "CREATE TABLE k_unique (x int NOT NULL, y int, UNIQUE (x))",
+            "CREATE TABLE k_nullable (x int UNIQUE)",
+            "CREATE TABLE k_none (x int)",
+        ] {
+            run(s, sql).await.unwrap();
+        }
+        let edit = s.edit().unwrap();
+        let key = |table: &str| {
+            let t = TableRef {
+                schema: None,
+                table: table.to_owned(),
+            };
+            async move { edit.row_key(&t).await.unwrap() }
+        };
+        assert_eq!(key("k_pk").await, vec!["b", "a"]);
+        assert_eq!(key("k_unique").await, vec!["x"]);
+        assert!(key("k_nullable").await.is_empty());
+        assert!(key("k_none").await.is_empty());
+        assert!(key("no_such_table").await.is_empty());
+        run(s, "DROP TABLE k_pk, k_unique, k_nullable, k_none")
+            .await
+            .unwrap();
     }
 }

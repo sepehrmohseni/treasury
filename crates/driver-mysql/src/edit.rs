@@ -3,12 +3,12 @@
 //! When the user already has a transaction open, the edits join it under a savepoint instead of
 //! starting and committing one of their own.
 
-use crate::session::MySqlSession;
+use crate::session::{MySqlSession, cell};
 use crate::{error, value};
 use async_trait::async_trait;
 use mysql_async::prelude::Queryable;
 use treasury_core::driver::Edit;
-use treasury_core::edit::{Changeset, RowChange};
+use treasury_core::edit::{Changeset, RowChange, TableRef};
 use treasury_core::{Error, ErrorKind, Result, Value};
 use treasury_sql::render;
 
@@ -199,13 +199,50 @@ impl Edit for MySqlSession {
         })
         .await
     }
+
+    async fn row_key(&self, table: &TableRef) -> Result<Vec<String>> {
+        let schema = table
+            .schema
+            .as_deref()
+            .map_or(mysql_async::Value::NULL, |s| s.into());
+        // Unique keys only; a functional key part has no column name and cannot identify a row
+        // from the result, and a nullable column lets several rows share the key.
+        let rows = self
+            .meta(
+                "SELECT INDEX_NAME, COLUMN_NAME, NULLABLE FROM information_schema.STATISTICS \
+                 WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ? \
+                   AND NON_UNIQUE = 0 \
+                 ORDER BY INDEX_NAME <> 'PRIMARY', INDEX_NAME, SEQ_IN_INDEX",
+                vec![schema, table.table.as_str().into()],
+            )
+            .await?;
+        let mut keys: Vec<(String, Vec<Option<String>>, bool)> = Vec::new();
+        for row in &rows {
+            let index = cell(row, 0).unwrap_or_default();
+            let column = cell(row, 1);
+            let nullable = cell(row, 2).is_some_and(|n| n.eq_ignore_ascii_case("YES"));
+            match keys.last_mut() {
+                Some((name, cols, any_null)) if *name == index => {
+                    cols.push(column);
+                    *any_null |= nullable;
+                }
+                _ => keys.push((index, vec![column], nullable)),
+            }
+        }
+        Ok(keys
+            .into_iter()
+            .find(|(name, cols, any_null)| {
+                cols.iter().all(Option::is_some) && (name == "PRIMARY" || !any_null)
+            })
+            .map(|(_, cols, _)| cols.into_iter().flatten().collect())
+            .unwrap_or_default())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use treasury_core::driver::SqlDialect;
-    use treasury_core::edit::TableRef;
 
     #[test]
     fn statements_bind_values_and_review_shows_them() {
