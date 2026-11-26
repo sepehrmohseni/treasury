@@ -7,6 +7,7 @@
 #   scripts/docker-check.sh fmt             cargo fmt --all on the real checkout
 #   scripts/docker-check.sh lock            add new dependencies to Cargo.lock (upgrades nothing)
 #   scripts/docker-check.sh release 0.2.0   cargo xtask release on the real checkout (commits, tags)
+#   scripts/docker-check.sh bundle DIR      the desktop app's Linux packages (.deb, .rpm) in DIR
 #   scripts/docker-check.sh shell           a shell in the prepared container
 #   scripts/docker-check.sh -- CMD          any command, for example: -- cargo test -p treasury-core
 #
@@ -21,6 +22,7 @@
 #                           themselves as skipped
 #   TREASURY_CI_GPU=off     do not pass /dev/dri in (the desktop smoke test renders in software)
 #   TREASURY_CI_RUST_IMAGE  build the image from another Rust release, e.g. rust:1.101.0-trixie
+#   TREASURY_CI_TARGET_GB   start the build cache afresh once it grows past this (default 30)
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -82,6 +84,7 @@ common=(--rm
   --cpus "$cpus"
   --env "CARGO_BUILD_JOBS=$cpus"
   --env "TREASURY_CI_CPUS=$cpus"
+  --env "TREASURY_CI_TARGET_GB=${TREASURY_CI_TARGET_GB:-30}"
   --user "$(id -u):$(id -g)"
   --volume treasury-ci-cargo:/cache/cargo
   --volume treasury-ci-target:/cache/target
@@ -108,6 +111,16 @@ if [ "${1:-}" = release ]; then
     --env "GIT_AUTHOR_NAME=$name" --env "GIT_AUTHOR_EMAIL=$email" \
     --env "GIT_COMMITTER_NAME=$name" --env "GIT_COMMITTER_EMAIL=$email" \
     --entrypoint cargo "$image" xtask "$@"
+fi
+
+if [ "${1:-}" = bundle ]; then
+  # The packages are for this machine's architecture. They are not signed for the updater;
+  # releases are built and signed by the release workflow.
+  out="${2:?usage: scripts/docker-check.sh bundle DIR}"
+  mkdir -p "$out"
+  out="$(cd "$out" && pwd)"
+  exec docker run "${common[@]}" --volume "$root:/src:ro,z" --volume "$out:/out:z" \
+    "$image" bundle
 fi
 
 # Running as your own user id keeps the read-only checkout readable even with a private umask.
