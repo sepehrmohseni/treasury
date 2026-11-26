@@ -91,10 +91,17 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev \
             libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
-            librsvg2-dev libxdo-dev patchelf file binaryen
-      - name: Install wasm-opt
-        if: runner.os == 'macOS'
-        run: brew install binaryen
+            librsvg2-dev libxdo-dev patchelf file
+      - name: Install wasm-opt (binaryen, pinned)
+        shell: bash
+        run: |
+          dir="$(cygpath -u "$RUNNER_TEMP" 2>/dev/null || echo "$RUNNER_TEMP")/binaryen"
+          bash docker/ci/install-binaryen.sh "$dir"
+          if command -v cygpath >/dev/null 2>&1; then
+            cygpath -w "$dir/bin" >> "$GITHUB_PATH"
+          else
+            echo "$dir/bin" >> "$GITHUB_PATH"
+          fi
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release-${{ matrix.name }}

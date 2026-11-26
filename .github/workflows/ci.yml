@@ -155,8 +155,18 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev \
             libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
-            librsvg2-dev libxdo-dev webkit2gtk-driver xvfb binaryen libgl1-mesa-dri libegl1 \
-            libgbm1 fonts-dejavu-core
+            librsvg2-dev libxdo-dev webkit2gtk-driver xvfb libgl1-mesa-dri libegl1 libgbm1 \
+            fonts-dejavu-core
+      - name: Install wasm-opt (binaryen, pinned)
+        shell: bash
+        run: |
+          dir="$(cygpath -u "$RUNNER_TEMP" 2>/dev/null || echo "$RUNNER_TEMP")/binaryen"
+          bash docker/ci/install-binaryen.sh "$dir"
+          if command -v cygpath >/dev/null 2>&1; then
+            cygpath -w "$dir/bin" >> "$GITHUB_PATH"
+          else
+            echo "$dir/bin" >> "$GITHUB_PATH"
+          fi
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@893d6ee8d714b6c7dfe2bcd94e5759e9a7958a7e # v2.90.10
         with:
