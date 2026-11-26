@@ -29,6 +29,16 @@ pub enum ErrorKind {
     },
     /// The TLS handshake failed or the certificate was not trusted.
     Tls,
+    /// The SSH host's key was not accepted: unknown and declined, or different from the key
+    /// recorded for that host.
+    SshHostKey {
+        /// The SSH host.
+        host: String,
+        /// The key's SHA-256 fingerprint as OpenSSH prints it.
+        fingerprint: String,
+        /// The host presented a different key than the one recorded.
+        changed: bool,
+    },
     /// The statement could not be parsed by the server.
     Syntax,
     /// The user lacks a privilege.
