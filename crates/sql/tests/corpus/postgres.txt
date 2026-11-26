@@ -70,6 +70,11 @@ W	notify jobs, 'payload'
 W	select nextval('s'), * from t
 W	explain analyze delete from t where a = 1
 W	explain analyze update t set a = 1
+W	explain (analyze, buffers) delete from t where a = 1
+W	explain (analyze true, format json) update t set a = 1
+W	explain (ANALYZE on) insert into t values (1)
+R	explain (analyze false) delete from t
+R	explain (analyze off, verbose) update t set a = 1
 W	begin; delete from t where id = 1; commit
 W	select * from t where id = (select nextval('s'))
 D	select * into t2 from t

@@ -3,8 +3,11 @@
 //! non-transactional tables and implicit commits make "run it and roll back" unsafe.
 
 use crate::dialect::{Rules, parser_dialect};
-use sqlparser::ast::{FromTable, SetExpr, Statement, TableWithJoins, UpdateTableFromKind};
+use sqlparser::ast::{
+    FromTable, SetExpr, Statement, TableWithJoins, UpdateTableFromKind, visit_statements,
+};
 use sqlparser::parser::Parser;
+use std::ops::ControlFlow;
 use treasury_core::analyze::CountPlan;
 
 /// How to count the rows `statement` would change.
@@ -19,6 +22,11 @@ pub fn plan(rules: &Rules, statement: &str) -> CountPlan {
     let [st] = parsed.as_slice() else {
         return underivable("it holds more than one statement");
     };
+    of_statement(rules, st)
+}
+
+fn of_statement(rules: &Rules, st: &Statement) -> CountPlan {
+    let dialect = parser_dialect(rules.dialect);
     let (tables, selection) = match st {
         Statement::Update(u) => {
             if !u.order_by.is_empty() || u.limit.is_some() {
@@ -49,13 +57,31 @@ pub fn plan(rules: &Rules, statement: &str) -> CountPlan {
             (tables, d.selection.as_ref())
         }
         Statement::Merge(_) => return underivable("MERGE statements cannot be previewed"),
-        Statement::Query(q)
-            if matches!(
+        Statement::Query(q) => {
+            let mut nested = matches!(
                 q.body.as_ref(),
                 SetExpr::Update(_) | SetExpr::Delete(_) | SetExpr::Insert(_) | SetExpr::Merge(_)
-            ) =>
-        {
-            return underivable("it changes data inside a WITH clause");
+            );
+            let _ = visit_statements(q, |s| {
+                if !matches!(s, Statement::Query(_)) {
+                    nested = true;
+                    return ControlFlow::Break(());
+                }
+                ControlFlow::Continue(())
+            });
+            if nested {
+                return underivable("it changes data inside a WITH clause");
+            }
+            return CountPlan::NotApplicable;
+        }
+        // EXPLAIN ANALYZE runs the statement it explains, so it changes the same rows.
+        Statement::Explain {
+            analyze,
+            options,
+            statement,
+            ..
+        } if crate::classify::explain_runs(*analyze, options.as_deref()) => {
+            return of_statement(rules, statement);
         }
         _ => return CountPlan::NotApplicable,
     };
@@ -138,6 +164,14 @@ mod tests {
                 "merge into t using s on t.id = s.id when matched then delete",
             ),
             (D::Postgres, "with x as (select 1) delete from t"),
+            (
+                D::Postgres,
+                "with gone as (delete from t where done returning id) select count(*) from gone",
+            ),
+            (
+                D::Postgres,
+                "select * from (with x as (update t set a = 1 returning a) select a from x) s",
+            ),
             (D::Postgres, "update t set a = 1; delete from t"),
             (D::Postgres, "upd ate t"),
         ] {
@@ -153,6 +187,32 @@ mod tests {
         assert_eq!(
             plan(&rules(D::Postgres), "select 1"),
             CountPlan::NotApplicable
+        );
+        assert_eq!(
+            plan(&rules(D::Postgres), "explain update t set a = 1"),
+            CountPlan::NotApplicable
+        );
+        assert_eq!(
+            plan(&rules(D::Postgres), "explain (analyze false) delete from t"),
+            CountPlan::NotApplicable
+        );
+    }
+
+    #[test]
+    fn explain_analyze_counts_what_it_runs() {
+        assert_eq!(
+            q(
+                D::Postgres,
+                "explain analyze update users set email = lower(email)"
+            ),
+            "SELECT COUNT(*) FROM users"
+        );
+        assert_eq!(
+            q(
+                D::Postgres,
+                "explain (analyze, buffers) delete from t where id = 1"
+            ),
+            "SELECT COUNT(*) FROM t WHERE id = 1"
         );
     }
 }

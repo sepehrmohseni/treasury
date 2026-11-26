@@ -5,7 +5,8 @@ use crate::dialect::Rules;
 use crate::functions;
 use sqlparser::ast::{
     CopyTarget, Expr, FunctionArguments, ObjectName, Query, Reset, SetExpr, Statement, TableFactor,
-    TransactionAccessMode, TransactionMode, Visit, Visitor, visit_expressions, visit_statements,
+    TransactionAccessMode, TransactionMode, UtilityOption, Visit, Visitor, visit_expressions,
+    visit_statements,
 };
 use std::ops::ControlFlow;
 use treasury_core::analyze::{Destructive, Flags, StatementClass, TxControl};
@@ -160,11 +161,12 @@ pub fn statement(rules: &Rules, st: &Statement) -> Verdict {
         }
         Statement::Explain {
             analyze,
+            options,
             statement: inner,
             ..
         } => {
             let inner_v = self::statement(rules, inner);
-            if *analyze {
+            if explain_runs(*analyze, options.as_deref()) {
                 let mut v = inner_v;
                 v.flags.executes = true;
                 v
@@ -513,6 +515,19 @@ impl Visitor for LockHints {
         }
         ControlFlow::Continue(())
     }
+}
+
+/// Whether an EXPLAIN runs the statement it explains: `EXPLAIN ANALYZE`, or PostgreSQL's
+/// option list `EXPLAIN (ANALYZE, BUFFERS)`, where only an explicit false value turns it off.
+pub(crate) fn explain_runs(analyze: bool, options: Option<&[UtilityOption]>) -> bool {
+    analyze
+        || options.unwrap_or_default().iter().any(|o| {
+            o.name.value.eq_ignore_ascii_case("analyze")
+                && o.arg.as_ref().is_none_or(|arg| {
+                    let v = arg.to_string().trim_matches('\'').to_ascii_lowercase();
+                    !matches!(v.as_str(), "false" | "off" | "no" | "0")
+                })
+        })
 }
 
 fn query(rules: &Rules, q: &Query) -> Verdict {

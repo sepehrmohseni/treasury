@@ -173,7 +173,14 @@ pub fn decide(
             reason: NameReason::Destructive { what },
         });
     }
-    if policy.environment != Environment::Local && statement.class == StatementClass::Write {
+    // Unknown counts as a write: an UPDATE or DELETE the parser could not read gets no preview,
+    // so it needs the connection name like any other form the rewriter cannot handle.
+    if policy.environment != Environment::Local
+        && matches!(
+            statement.class,
+            StatementClass::Write | StatementClass::Unknown
+        )
+    {
         match count() {
             CountPlan::Query(query) => {
                 steps.push(Confirmation::CountRows { query });
@@ -299,6 +306,44 @@ mod tests {
         );
         assert_eq!(
             decide(&p, &st(StatementClass::Read, Flags::default()), no_count),
+            Decision::Allow
+        );
+    }
+
+    #[test]
+    fn unknown_statements_get_the_write_preview() {
+        // An UPDATE the parser could not read: no count, so the name is required.
+        let p = policy(Environment::Production, false, ReadOnlyEnforcement::Server);
+        let underivable = || CountPlan::Underivable {
+            reason: "Treasury could not parse it.".into(),
+        };
+        assert_eq!(
+            decide(
+                &p,
+                &st(StatementClass::Unknown, Flags::default()),
+                underivable
+            ),
+            Decision::Confirm {
+                steps: vec![Confirmation::TypeName {
+                    reason: NameReason::NoPreview {
+                        detail: "Treasury could not parse it.".into()
+                    }
+                }]
+            }
+        );
+        // A procedure call parses but is no UPDATE or DELETE: it runs once writes are unlocked.
+        assert_eq!(
+            decide(&p, &st(StatementClass::Unknown, Flags::default()), no_count),
+            Decision::Allow
+        );
+        // On a local database nothing is previewed.
+        let local = policy(Environment::Local, false, ReadOnlyEnforcement::Server);
+        assert_eq!(
+            decide(
+                &local,
+                &st(StatementClass::Unknown, Flags::default()),
+                underivable
+            ),
             Decision::Allow
         );
     }
