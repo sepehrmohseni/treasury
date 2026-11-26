@@ -18,6 +18,7 @@ treasury-vault = { path = "crates/vault" }
 treasury-store = { path = "crates/store" }
 treasury-tunnel = { path = "crates/tunnel" }
 treasury-export = { path = "crates/export" }
+treasury-import = { path = "crates/import" }
 
 async-trait = "0.1.92"
 futures = { version = "0.3.34", default-features = false, features = ["std", "async-await"] }
