@@ -12,6 +12,7 @@ publish.workspace = true
 [dependencies]
 treasury-core.workspace = true
 sqlparser = { version = "0.64.0", features = ["visitor"] }
+serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
