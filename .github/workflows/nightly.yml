@@ -22,6 +22,7 @@ jobs:
       TREASURY_POSTGRES_TAG: 15.20-alpine
       TREASURY_MYSQL_TAG: 8.4.10
       TREASURY_MARIADB_TAG: 11.8.6
+      TREASURY_MONGO_TAG: 6.0.28
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,7 +37,8 @@ jobs:
       - name: Pull test images
         run: |
           for image in "postgres:$TREASURY_POSTGRES_TAG" "mysql:$TREASURY_MYSQL_TAG" \
-            "mariadb:$TREASURY_MARIADB_TAG" mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04; do
+            "mariadb:$TREASURY_MARIADB_TAG" "mongo:$TREASURY_MONGO_TAG" \
+            mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04; do
             docker pull -q "$image" &
           done
           wait

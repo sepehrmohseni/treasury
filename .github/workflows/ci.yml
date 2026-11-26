@@ -101,7 +101,7 @@ jobs:
       # about the tests. The tests pull anything missing themselves.
       - name: Pull test images
         run: |
-          for image in postgres:19.0-alpine mysql:9.7.0 mariadb:12.3.2 \
+          for image in postgres:19.0-alpine mysql:9.7.0 mariadb:12.3.2 mongo:8.0.17 \
             mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04; do
             docker pull -q "$image" &
           done

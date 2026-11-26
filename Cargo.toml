@@ -22,6 +22,7 @@ treasury-import = { path = "crates/import" }
 treasury-driver-postgres = { path = "crates/driver-postgres" }
 treasury-driver-mysql = { path = "crates/driver-mysql" }
 treasury-driver-mssql = { path = "crates/driver-mssql" }
+treasury-driver-mongo = { path = "crates/driver-mongo" }
 treasury-tests = { path = "tests" }
 
 async-trait = "0.1.92"

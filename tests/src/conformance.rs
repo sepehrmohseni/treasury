@@ -256,6 +256,11 @@ pub async fn stream_million_rows(f: &dyn Fixture) -> Result<(), String> {
     let exec = s.execute().ok_or("no execute")?;
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     let store = PageStore::new(BUDGET, dir.path().into()).map_err(|e| e.to_string())?;
+    // "Idle" is a connection that has run something: client libraries set up pools, buffers and
+    // background tasks on first use, which is not what this check measures.
+    run(s.as_ref(), &f.rows(1_000))
+        .await
+        .map_err(|e| format!("warm-up: {e}"))?;
     let before = rss_bytes();
     let stream = exec
         .execute(ExecRequest::new(f.rows(N)))

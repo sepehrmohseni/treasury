@@ -15,3 +15,4 @@ as superseded and link the one that replaces it.
 | [0007](0007-postgres-results-through-the-simple-protocol.md) | PostgreSQL results stream through the simple protocol, after a prepare |
 | [0008](0008-mysql-on-mysql-async.md) | MySQL and MariaDB use mysql_async, prepared first, with the system's roots added |
 | [0009](0009-sql-server-on-tiberius-ng.md) | SQL Server uses tiberius-ng; read-only is enforced by the guardrails |
+| [0010](0010-mongodb-commands-and-results.md) | MongoDB speaks database commands; results keep every field |

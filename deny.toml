@@ -40,7 +40,10 @@ allow = [
   "MPL-2.0",
 ]
 confidence-threshold = 0.9
-exceptions = []
+exceptions = [
+  # A public-domain dedication; the MongoDB driver uses it through const-random.
+  { allow = ["CC0-1.0"], crate = "tiny-keccak" },
+]
 
 [licenses.private]
 # Workspace crates are never published; their license is the workspace's.

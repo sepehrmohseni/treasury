@@ -1,0 +1,26 @@
+[package]
+name = "treasury-driver-mongo"
+description = "MongoDB driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+treasury-core.workspace = true
+treasury-tunnel.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+secrecy.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+mongodb = { version = "3.10.2", default-features = false, features = ["rustls-tls", "compat-3-0-0", "dns-resolver", "cert-key-password"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+
+[lints]
+workspace = true
