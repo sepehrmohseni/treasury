@@ -1,0 +1,28 @@
+[package]
+name = "treasury-export"
+description = "Streaming exports: CSV, NDJSON, JSON, Parquet and SQL INSERT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+treasury-core.workspace = true
+treasury-sql.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+csv = "1.4.0"
+parquet = { version = "60.2.0", default-features = false, features = ["arrow", "snap"] }
+arrow-array = "60.2.0"
+arrow-schema = "60.2.0"
+
+[dev-dependencies]
+futures.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
+parquet = { version = "60.2.0", default-features = false, features = ["arrow", "snap"] }
+
+[lints]
+workspace = true
