@@ -8,6 +8,7 @@ mod count;
 pub mod dialect;
 mod functions;
 mod limit;
+pub mod render;
 pub mod split;
 mod tokens;
 
