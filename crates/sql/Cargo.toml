@@ -1,0 +1,20 @@
+[package]
+name = "treasury-sql"
+description = "Statement classification, limit rewriting and count derivation for SQL dialects"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+treasury-core.workspace = true
+sqlparser = { version = "0.64.0", features = ["visitor"] }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
