@@ -49,7 +49,13 @@ fn main() -> ExitCode {
 }
 
 /// The workspace root: the parent of this crate's manifest directory.
+///
+/// `cargo run` sets the variable at run time too, and that value wins: cargo can reuse a binary
+/// built from a copy of the checkout elsewhere (the Docker image builds in `/work`, while
+/// `scripts/docker-check.sh release` runs on the real checkout), and the compiled-in path would
+/// then point at the copy.
 fn workspace_root() -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")), PathBuf::from);
     manifest.parent().map(PathBuf::from).unwrap_or(manifest)
 }
