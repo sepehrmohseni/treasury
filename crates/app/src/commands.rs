@@ -11,9 +11,9 @@ use treasury_core::format::{FormatOptions, display};
 use treasury_core::schema::{ChildPage, ChildQuery, ObjectDetails, ObjectPath};
 use treasury_core::{Error, Result};
 use treasury_ipc::{
-    AppFacts, ConnectionView, EditInfo, ExportFormat, ExportView, HistoryView, ImportItem,
-    ImportPreview, LiveView, NAME_LIMIT, Prepared, RowEdits, RunOutcome, SavedQueryView,
-    SecretInput, TabView, UpdateView, WindowView, folder_path,
+    AppFacts, CatalogView, ColumnView, ConnectionView, EditInfo, ExportFormat, ExportView,
+    HistoryView, ImportItem, ImportPreview, LiveView, NAME_LIMIT, Prepared, RowEdits, RunOutcome,
+    SavedQueryView, SecretInput, TabView, UpdateView, WindowView, folder_path,
 };
 use treasury_store::{RunStatus, SavedQuery, TabState};
 
@@ -155,6 +155,22 @@ pub async fn ddl(
         .introspect()
         .ok_or_else(|| Error::unsupported("This connection has no object tree."))?;
     tree.ddl(&path).await
+}
+
+/// The tables, views and collections of connection `id`, for completion and the palette.
+#[tauri::command]
+pub async fn catalog(state: State<'_, AppState>, id: ConnectionId) -> Result<CatalogView> {
+    Ok(state.runtime.catalog(&id).await?.as_ref().clone())
+}
+
+/// The columns of the table or view at `path`, for completion.
+#[tauri::command]
+pub async fn columns(
+    state: State<'_, AppState>,
+    id: ConnectionId,
+    path: ObjectPath,
+) -> Result<Vec<ColumnView>> {
+    state.runtime.columns(&id, &path).await
 }
 
 #[tauri::command]

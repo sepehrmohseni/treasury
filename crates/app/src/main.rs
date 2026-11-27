@@ -87,6 +87,8 @@ fn main() {
             commands::children,
             commands::details,
             commands::ddl,
+            commands::catalog,
+            commands::columns,
             commands::prepare,
             commands::run,
             commands::window,

@@ -9,6 +9,7 @@ use treasury_core::analyze::StatementClass;
 use treasury_core::config::{ConnectionConfig, ConnectionId, Engine, SecretSlot};
 use treasury_core::driver::{Capabilities, ServerInfo};
 use treasury_core::format::Cell;
+use treasury_core::schema::{ObjectKind, ObjectPath};
 
 /// Facts the interface needs at start.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -315,4 +316,37 @@ mod tests {
         assert_eq!(new_tab_title(["Query 1", "orders", "Query 3"]), "Query 2");
         assert_eq!(new_tab_title(["Query 2", "Query x"]), "Query 1");
     }
+}
+
+/// A table, view or collection of a connection, for completion and the command palette.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogEntry {
+    /// Where it is in the object tree.
+    pub path: ObjectPath,
+    /// What it is.
+    pub kind: ObjectKind,
+    /// Its name.
+    pub name: String,
+    /// Its schema (or keyspace), if the engine has them.
+    pub schema: Option<String>,
+    /// Its database (or catalog), if the engine has them.
+    pub database: Option<String>,
+}
+
+/// The tables, views and collections of a connection, as far as they were read.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogView {
+    /// What was found.
+    pub entries: Vec<CatalogEntry>,
+    /// False when there were more than could be read, or part of the tree could not be read.
+    pub complete: bool,
+}
+
+/// A column, for completion.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ColumnView {
+    /// Its name.
+    pub name: String,
+    /// Its type, as in DDL.
+    pub type_name: String,
 }

@@ -49,6 +49,9 @@ pub struct Live {
     /// Facts shown in the status bar.
     pub info: ServerInfo,
     unlocked_until: Mutex<Option<Instant>>,
+    /// Its tables, views and collections, once read; cleared when a statement changes the
+    /// schema.
+    catalog: tokio::sync::Mutex<Option<Arc<treasury_ipc::CatalogView>>>,
     _tunnel: Option<Tunnel>,
 }
 
@@ -268,6 +271,7 @@ impl Runtime {
             meta,
             info,
             unlocked_until: Mutex::new(None),
+            catalog: tokio::sync::Mutex::new(None),
             _tunnel: tunnel,
         });
         if let Some(old) = self
@@ -499,6 +503,10 @@ impl Runtime {
                 return Err(e);
             }
         };
+        if one.statement.class == StatementClass::Ddl {
+            // The schema may change; the catalog is read again when next asked for.
+            *live.catalog.lock().await = None;
+        }
         let stream = only_writes_count(stream, one.statement.class);
         let max_rows = match (limit, live.session.analyzer().limit(statement, 1)) {
             (true, LimitPlan::StopFetching) => Some(self.row_limit()),
@@ -673,6 +681,7 @@ impl Runtime {
     }
 }
 
+mod catalog;
 mod edit;
 
 #[cfg(test)]

@@ -442,3 +442,25 @@ async fn production_keeps_no_history_unless_asked_to() {
         1
     );
 }
+
+#[tokio::test]
+async fn the_catalog_lists_tables_with_their_schema_and_columns() {
+    let f = runtime();
+    let c = open(&f.rt, Environment::Development).await;
+    let catalog = f.rt.catalog(&c.id).await.unwrap();
+    assert!(catalog.complete);
+    let [t] = catalog.entries.as_slice() else {
+        panic!("{catalog:?}");
+    };
+    assert_eq!(
+        (t.name.as_str(), t.schema.as_deref(), t.database.as_deref()),
+        ("types", Some("main"), Some("db"))
+    );
+    let columns = f.rt.columns(&c.id, &t.path).await.unwrap();
+    assert_eq!(columns[0].name, "i");
+    // Read once, then kept.
+    assert!(Arc::ptr_eq(&catalog, &f.rt.catalog(&c.id).await.unwrap()));
+    // A statement that changes the schema makes it read again.
+    run_all(&f, &c, "ddl").await;
+    assert!(!Arc::ptr_eq(&catalog, &f.rt.catalog(&c.id).await.unwrap()));
+}
