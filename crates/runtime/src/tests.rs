@@ -341,6 +341,7 @@ async fn edits_reach_rows_by_the_key_the_server_sent() {
         ],
         deletes: vec![3, 3],
         inserts: vec![],
+        expire: None,
     };
     assert_eq!(f.rt.edit_review(rid, 0, &edits).await.unwrap().len(), 3);
     assert_eq!(f.rt.edit_apply(rid, 0, &edits).await.unwrap(), 3);
@@ -368,10 +369,19 @@ async fn edits_reach_rows_by_the_key_the_server_sent() {
         cells: vec![cell(0, Some("two"))],
         deletes: Vec::new(),
         inserts: vec![],
+        expire: None,
     };
     let err = f.rt.edit_apply(rid, 0, &typo).await.unwrap_err();
     assert!(matches!(err.kind, ErrorKind::Config { .. }), "{err:?}");
     assert!(f.rt.edit_apply(rid, 0, &RowEdits::default()).await.is_err());
+    // A table has no expiry to change.
+    assert_eq!(info.expiry, None);
+    let expire = RowEdits {
+        expire: Some(treasury_core::edit::Expiry::After(60)),
+        ..RowEdits::default()
+    };
+    let err = f.rt.edit_apply(rid, 0, &expire).await.unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Guard);
     assert_eq!(f.driver.applied().len(), 1, "nothing more was applied");
 }
 
@@ -384,6 +394,7 @@ async fn production_edits_wait_for_unlocked_writes() {
         cells: vec![cell(0, Some("9"))],
         deletes: Vec::new(),
         inserts: vec![],
+        expire: None,
     };
     let err = f.rt.edit_apply(rid, 0, &edits).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::Guard);
@@ -408,6 +419,7 @@ async fn results_the_analyzer_cannot_place_say_why() {
                 cells: vec![cell(0, Some("x"))],
                 deletes: Vec::new(),
                 inserts: vec![],
+                expire: None,
             },
         )
         .await

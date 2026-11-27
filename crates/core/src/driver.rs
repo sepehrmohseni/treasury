@@ -4,7 +4,7 @@
 
 use crate::analyze::Analyzer;
 use crate::config::{ConnectionConfig, Engine, SecretSlot};
-use crate::edit::{Changeset, TableRef};
+use crate::edit::{Changeset, Expiry, TableRef};
 use crate::error::Result;
 use crate::exec::{ExecRequest, ExecStream};
 use crate::health::{Metric, MetricSet};
@@ -261,4 +261,10 @@ pub trait Edit: Send + Sync {
     /// whose columns are all NOT NULL. Empty when it has neither. An unqualified name is
     /// resolved the way the server resolves it for this session.
     async fn row_key(&self, table: &TableRef) -> Result<Vec<String>>;
+
+    /// When the rows' source expires, for engines that expire whole keys; `None` when it has no
+    /// expiry to show or change.
+    async fn expiry(&self, _table: &TableRef) -> Result<Option<Expiry>> {
+        Ok(None)
+    }
 }

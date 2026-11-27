@@ -15,7 +15,8 @@ use std::collections::HashMap;
 use treasury_core::exec::ExecutionStatus;
 use treasury_core::format::Cell;
 use treasury_ipc::{
-    CellEdit, CopyFormat, CopyView, EditInfo, ExportFormat, ExportView, RowEdits, WindowView,
+    CellEdit, CopyFormat, CopyView, EditInfo, Expiry, ExportFormat, ExportView, RowEdits,
+    WindowView,
 };
 use wasm_bindgen::JsCast;
 
@@ -32,6 +33,43 @@ pub fn thousands(n: u64) -> String {
         out.push(c);
     }
     out
+}
+
+/// A time to live in its two largest units: `45 s`, `5 min 3 s`, `2 h`, `3 d 4 h`.
+fn duration(seconds: u64) -> String {
+    let units = [(86_400, "d"), (3_600, "h"), (60, "min"), (1, "s")];
+    let Some(first) = units.iter().position(|(n, _)| seconds >= *n) else {
+        return "0 s".to_owned();
+    };
+    let (big, big_name) = units[first];
+    let mut out = format!("{} {big_name}", seconds / big);
+    if let Some((small, small_name)) = units.get(first + 1) {
+        let rest = seconds % big / small;
+        if rest > 0 {
+            out.push_str(&format!(" {rest} {small_name}"));
+        }
+    }
+    out
+}
+
+/// A key's expiry, for the result bar.
+fn expiry_text(e: Expiry) -> String {
+    match e {
+        Expiry::Never => "Expires: never".to_owned(),
+        Expiry::After(s) => format!("Expires in {}", duration(s)),
+    }
+}
+
+/// A typed amount of a unit as seconds, or why it cannot be one.
+fn expiry_seconds(amount: &str, unit: u64) -> Result<u64, &'static str> {
+    let n: u64 = amount
+        .trim()
+        .parse()
+        .map_err(|_| "Type the expiry as a whole number.")?;
+    if n == 0 {
+        return Err("An expiry of 0 deletes the key. Type 1 or more.");
+    }
+    n.checked_mul(unit).ok_or("That expiry is too far away.")
 }
 
 /// The pending value of a cell, if it was edited: `Some(None)` is NULL.
@@ -57,7 +95,7 @@ fn change_count(edits: &RowEdits) -> usize {
     let mut rows = edits.deletes.clone();
     rows.sort_unstable();
     rows.dedup();
-    cells.len() + rows.len() + edits.inserts.len()
+    cells.len() + rows.len() + edits.inserts.len() + usize::from(edits.expire.is_some())
 }
 
 /// The rectangle between the cell first clicked and the one shift-clicked: rows and columns,
@@ -182,6 +220,11 @@ pub fn Results(
     // A cell of a new row being typed in: the row's place among the new rows, and the column.
     let editing_new = RwSignal::new(None::<(usize, usize)>);
     let draft = RwSignal::new(String::new());
+    // The key's expiry being changed: whether the editor is open, the amount and the unit's
+    // length in seconds.
+    let expiry_open = RwSignal::new(false);
+    let expiry_amount = RwSignal::new(String::new());
+    let expiry_unit = RwSignal::new(60u64);
 
     let reset_edits = move || {
         info.set(None);
@@ -191,6 +234,22 @@ pub fn Results(
         anchor.set(None);
         editing.set(None);
         editing_new.set(None);
+        expiry_open.set(false);
+    };
+
+    let set_expiry = move |_| match expiry_seconds(
+        &expiry_amount.get_untracked(),
+        expiry_unit.get_untracked(),
+    ) {
+        Ok(seconds) => {
+            pending.update(|p| p.expire = Some(Expiry::After(seconds)));
+            expiry_open.set(false);
+        }
+        Err(why) => state.notice.set(Some(why.to_owned())),
+    };
+    let never_expire = move |_| {
+        pending.update(|p| p.expire = Some(Expiry::Never));
+        expiry_open.set(false);
     };
 
     // A click selects a cell; a shift-click selects the rectangle up to it.
@@ -743,6 +802,34 @@ pub fn Results(
                 {move || info.with(|i| i.as_ref().is_some_and(|i| i.table.is_some())).then(|| view! {
                     <button class="btn small add-row" on:click=add_row>"Add row"</button>
                 })}
+                {move || info.with(|i| i.as_ref().and_then(|i| i.expiry)).map(|current| {
+                    let label = move || match pending.with(|p| p.expire) {
+                        Some(e) => format!("{} (unsaved)", expiry_text(e)),
+                        None => expiry_text(current),
+                    };
+                    view! {
+                        <button class="btn small expiry" title="The key's expiry as it was when the result arrived. Change it here; it is saved with the other changes."
+                            aria-expanded=move || expiry_open.get().to_string()
+                            on:click=move |_| expiry_open.update(|o| *o = !*o)>{label}</button>
+                        {move || expiry_open.get().then(|| view! {
+                            <span class="expiry-edit" role="group" aria-label="New expiry">
+                                <label>"Expire in "
+                                    <input class="expiry-amount" type="number" min="1" step="1" prop:value=move || expiry_amount.get()
+                                        on:input=move |ev| expiry_amount.set(event_target_value(&ev))
+                                        on:keydown=move |ev: web_sys::KeyboardEvent| if ev.key() == "Enter" { set_expiry(()); } />
+                                </label>
+                                <select class="expiry-unit" aria-label="Unit" on:change=move |ev| expiry_unit.set(event_target_value(&ev).parse().unwrap_or(60))>
+                                    <option value="1" selected=move || expiry_unit.get() == 1>"seconds"</option>
+                                    <option value="60" selected=move || expiry_unit.get() == 60>"minutes"</option>
+                                    <option value="3600" selected=move || expiry_unit.get() == 3600>"hours"</option>
+                                    <option value="86400" selected=move || expiry_unit.get() == 86400>"days"</option>
+                                </select>
+                                <button class="btn small primary expiry-set" on:click=move |_| set_expiry(())>"Set"</button>
+                                <button class="btn small expiry-never" on:click=never_expire>"Never expire"</button>
+                            </span>
+                        })}
+                    }
+                })}
                 {move || {
                     let row_selected = selected.get().is_some() && info.with(|i| i.as_ref().is_some_and(|i| i.table.is_some()));
                     row_selected.then(|| {
@@ -787,6 +874,25 @@ mod tests {
     }
 
     #[test]
+    fn expiries_read_in_their_two_largest_units() {
+        assert_eq!(duration(45), "45 s");
+        assert_eq!(duration(303), "5 min 3 s");
+        assert_eq!(duration(7_200), "2 h");
+        assert_eq!(duration(3 * 86_400 + 4 * 3_600 + 59), "3 d 4 h");
+        assert_eq!(expiry_text(Expiry::Never), "Expires: never");
+        assert_eq!(expiry_text(Expiry::After(90)), "Expires in 1 min 30 s");
+    }
+
+    #[test]
+    fn a_typed_expiry_is_a_whole_positive_number() {
+        assert_eq!(expiry_seconds(" 2 ", 3_600), Ok(7_200));
+        assert!(expiry_seconds("0", 60).is_err());
+        assert!(expiry_seconds("1.5", 60).is_err());
+        assert!(expiry_seconds("-1", 60).is_err());
+        assert!(expiry_seconds(&u64::MAX.to_string(), 60).is_err());
+    }
+
+    #[test]
     fn the_latest_edit_of_a_cell_is_what_it_shows() {
         let e = RowEdits {
             cells: vec![
@@ -796,6 +902,7 @@ mod tests {
             ],
             deletes: vec![],
             inserts: vec![],
+            expire: None,
         };
         assert_eq!(pending_value(&e, 1, 0), Some(None));
         assert_eq!(pending_value(&e, 2, 1), Some(Some("b".into())));
@@ -880,6 +987,7 @@ mod tests {
             ],
             deletes: vec![3, 4, 4],
             inserts: vec![],
+            expire: None,
         };
         // Row 1's cell, and rows 3 and 4 (row 3's cell goes with it).
         assert_eq!(change_count(&e), 3);

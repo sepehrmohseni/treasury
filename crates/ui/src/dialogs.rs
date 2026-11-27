@@ -905,6 +905,20 @@ fn ConfirmDialog(
     }
 }
 
+/// What a save changed: `rows` rows, and the key's expiry when `expiry`.
+fn saved_text(rows: u64, expiry: bool) -> String {
+    match (rows, expiry) {
+        (0, true) => "Saved. The key's expiry changed.".to_owned(),
+        (1, false) => "Saved. 1 row changed.".to_owned(),
+        (1, true) => "Saved. 1 row and the key's expiry changed.".to_owned(),
+        (n, false) => format!("Saved. {} rows changed.", crate::grid::thousands(n)),
+        (n, true) => format!(
+            "Saved. {} rows and the key's expiry changed.",
+            crate::grid::thousands(n)
+        ),
+    }
+}
+
 #[component]
 fn ReviewDialog(
     result: u64,
@@ -917,6 +931,7 @@ fn ReviewDialog(
     let saving = RwSignal::new(false);
     let save = move |_| {
         let edits = edits.clone();
+        let expiry = edits.expire.is_some();
         saving.set(true);
         leptos::task::spawn_local(async move {
             match ipc::call::<_, u64>(
@@ -926,10 +941,7 @@ fn ReviewDialog(
             .await
             {
                 Ok(n) => {
-                    state.notice.set(Some(match n {
-                        1 => "Saved. 1 row changed.".to_owned(),
-                        n => format!("Saved. {} rows changed.", crate::grid::thousands(n)),
-                    }));
+                    state.notice.set(Some(saved_text(n, expiry)));
                     state.saved.set(Some(result));
                     close();
                 }
@@ -1302,5 +1314,25 @@ fn SettingsDialog() -> impl IntoView {
                 </footer>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_save_says_what_it_changed() {
+        assert_eq!(super::saved_text(1, false), "Saved. 1 row changed.");
+        assert_eq!(
+            super::saved_text(1_200, false),
+            "Saved. 1,200 rows changed."
+        );
+        assert_eq!(
+            super::saved_text(0, true),
+            "Saved. The key's expiry changed."
+        );
+        assert_eq!(
+            super::saved_text(2, true),
+            "Saved. 2 rows and the key's expiry changed."
+        );
     }
 }

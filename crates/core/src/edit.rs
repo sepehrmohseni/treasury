@@ -35,6 +35,16 @@ pub enum RowChange {
     },
 }
 
+/// When a key expires: the engines that have expiry (Redis and Valkey) keep it per key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "seconds", rename_all = "snake_case")]
+pub enum Expiry {
+    /// It is kept until it is deleted.
+    Never,
+    /// It is deleted this many seconds from now.
+    After(u64),
+}
+
 /// Pending edits to one table, applied in one transaction where the engine has transactions.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Changeset {
@@ -44,6 +54,10 @@ pub struct Changeset {
     pub key_columns: Vec<String>,
     /// The changes, in the order they are applied.
     pub changes: Vec<RowChange>,
+    /// A new expiry for the whole key, applied after the changes. Only a driver whose
+    /// [`Edit::expiry`](crate::driver::Edit::expiry) reports one is given it.
+    #[serde(default)]
+    pub expire: Option<Expiry>,
 }
 
 impl Changeset {
@@ -91,6 +105,7 @@ mod tests {
             changes: vec![RowChange::Delete {
                 key: vec![Value::I64(1)],
             }],
+            expire: None,
         };
         assert!(cs.validate().is_err());
         cs.key_columns = vec!["id".into()];

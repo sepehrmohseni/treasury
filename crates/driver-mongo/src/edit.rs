@@ -194,6 +194,7 @@ mod tests {
                     key: vec![Value::I64(2)],
                 },
             ],
+            expire: None,
         };
         let p = plan(&cs).unwrap();
         assert_eq!(p[0].command.get_str("update").unwrap(), "orders");

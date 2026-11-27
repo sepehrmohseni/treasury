@@ -3,13 +3,13 @@
 //! in MULTI/EXEC, so all of them apply or none.
 //!
 //! The analyzer names the key and its type in the result's [`TableRef`]: the type as the
-//! schema, the key as the table.
+//! schema, the key as the table. A new expiry for the key runs last, as EXPIRE or PERSIST.
 
 use crate::lang::quote;
 use crate::session::RedisSession;
 use async_trait::async_trait;
 use treasury_core::driver::Edit;
-use treasury_core::edit::{Changeset, RowChange, TableRef};
+use treasury_core::edit::{Changeset, Expiry, RowChange, TableRef};
 use treasury_core::value::Value;
 use treasury_core::{Error, ErrorKind, Result};
 
@@ -143,6 +143,18 @@ fn commands(changes: &Changeset) -> Result<Vec<Vec<String>>> {
         };
         out.extend(words);
     }
+    match changes.expire {
+        None => {}
+        Some(Expiry::Never) => out.push(vec!["PERSIST".into(), key]),
+        Some(Expiry::After(0)) => {
+            return Err(refuse(
+                "An expiry of 0 seconds deletes the key. Give it at least 1 second.",
+            ));
+        }
+        Some(Expiry::After(seconds)) => {
+            out.push(vec!["EXPIRE".into(), key, seconds.to_string()]);
+        }
+    }
     Ok(out)
 }
 
@@ -174,6 +186,7 @@ impl Edit for RedisSession {
         }
         let mut conn = self.conn().await;
         let _: () = conn.pipeline(&pipe).await.map_err(|e| self.map(&e))?;
+        // Rows only; the caller knows whether the expiry changed too.
         Ok(u64::try_from(changes.changes.len()).unwrap_or(u64::MAX))
     }
 
@@ -185,6 +198,19 @@ impl Edit for RedisSession {
             Some("list") => vec!["index".into()],
             Some("string") => vec!["value".into()],
             _ => Vec::new(),
+        })
+    }
+
+    /// The key's time to live. A key that does not exist yet has none to show.
+    async fn expiry(&self, table: &TableRef) -> Result<Option<Expiry>> {
+        let mut conn = self.conn().await;
+        let ttl: i64 = self
+            .meta(&mut conn, redis::cmd("TTL").arg(&table.table))
+            .await?;
+        Ok(match ttl {
+            -1 => Some(Expiry::Never),
+            t if t >= 0 => Some(Expiry::After(t.cast_unsigned())),
+            _ => None,
         })
     }
 }
@@ -201,6 +227,7 @@ mod tests {
             },
             key_columns: vec![],
             changes: list,
+            expire: None,
         }
     }
 
@@ -251,6 +278,34 @@ mod tests {
         assert_eq!(
             commands(&s).unwrap(),
             [vec!["SET", "user:1", "new", "KEEPTTL"]]
+        );
+    }
+
+    #[test]
+    fn a_new_expiry_runs_after_the_changes() {
+        let mut c = changes(
+            "hash",
+            vec![RowChange::Delete {
+                key: vec![t("old")],
+            }],
+        );
+        c.expire = Some(Expiry::After(3600));
+        assert_eq!(
+            commands(&c).unwrap(),
+            [
+                vec!["HDEL", "user:1", "old"],
+                vec!["EXPIRE", "user:1", "3600"]
+            ]
+        );
+        let mut p = changes("set", vec![]);
+        p.expire = Some(Expiry::Never);
+        assert_eq!(commands(&p).unwrap(), [vec!["PERSIST", "user:1"]]);
+        p.expire = Some(Expiry::After(0));
+        assert!(
+            commands(&p)
+                .unwrap_err()
+                .message
+                .contains("deletes the key")
         );
     }
 

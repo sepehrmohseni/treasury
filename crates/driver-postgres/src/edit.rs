@@ -244,6 +244,7 @@ mod tests {
             },
             key_columns: vec!["id".into(), "region".into()],
             changes: list,
+            expire: None,
         }
     }
 

@@ -261,6 +261,7 @@ mod tests {
                     key: vec![Value::Null],
                 },
             ],
+            expire: None,
         };
         let p = plan(SqlDialect::MySql, &cs);
         assert_eq!(

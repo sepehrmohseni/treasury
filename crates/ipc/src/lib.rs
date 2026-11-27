@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use treasury_core::analyze::StatementClass;
 use treasury_core::config::{ConnectionConfig, ConnectionId, Engine, SecretSlot};
 use treasury_core::driver::{Capabilities, ServerInfo};
+pub use treasury_core::edit::Expiry;
 use treasury_core::format::Cell;
 use treasury_core::schema::{ObjectKind, ObjectPath};
 
@@ -196,6 +197,9 @@ pub struct RowEdits {
     /// left out get the table's default.
     #[serde(default)]
     pub inserts: Vec<Vec<(usize, Option<String>)>>,
+    /// A new expiry for the key the rows come from, when [`EditInfo::expiry`] says it has one.
+    #[serde(default)]
+    pub expire: Option<Expiry>,
 }
 
 /// Whether a result set's rows can be edited.
@@ -207,6 +211,10 @@ pub struct EditInfo {
     pub columns: Vec<bool>,
     /// Why the rows cannot be edited, when they cannot.
     pub reason: Option<String>,
+    /// When the key the rows come from expires, as it was when asked; `None` when the rows'
+    /// source has no expiry (only Redis and Valkey keys have one).
+    #[serde(default)]
+    pub expiry: Option<Expiry>,
 }
 
 /// A newer release than the one running.

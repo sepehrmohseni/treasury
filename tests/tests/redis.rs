@@ -414,6 +414,7 @@ mod docker {
             cells,
             deletes,
             inserts,
+            expire: None,
         };
 
         // A hash: a value changed, a field removed, one added. The field names stay as they are.
@@ -495,6 +496,61 @@ mod docker {
         );
         let ttl = run(direct.as_ref(), "TTL greeting").await.unwrap();
         assert!(matches!(ttl[0][0], Value::I64(n) if n > 0), "{ttl:?}");
+
+        // The key's expiry is shown with its rows and changes with them, in the same MULTI/EXEC.
+        use treasury_ipc::Expiry;
+        let ttl_of = |key: &'static str| {
+            let direct = direct.as_ref();
+            async move {
+                match run(direct, &format!("TTL {key}")).await.unwrap()[0][0] {
+                    Value::I64(n) => n,
+                    ref other => panic!("{other:?}"),
+                }
+            }
+        };
+        let rid = open("GET greeting").await;
+        let info = rt.edit_info(rid, 0).await.unwrap();
+        assert!(
+            matches!(info.expiry, Some(Expiry::After(n)) if n > 0 && n <= 300),
+            "{info:?}"
+        );
+        let rid = open("HGETALL user:9").await;
+        assert_eq!(
+            rt.edit_info(rid, 0).await.unwrap().expiry,
+            Some(Expiry::Never)
+        );
+        let e = RowEdits {
+            cells: vec![],
+            deletes: vec![],
+            inserts: vec![vec![(0, Some("team".into())), (1, Some("core".into()))]],
+            expire: Some(Expiry::After(3_600)),
+        };
+        assert_eq!(
+            rt.edit_review(rid, 0, &e).await.unwrap(),
+            ["HSET user:9 team core", "EXPIRE user:9 3600"]
+        );
+        assert_eq!(rt.edit_apply(rid, 0, &e).await.unwrap(), 1, "rows changed");
+        let ttl = ttl_of("user:9").await;
+        assert!((3_590..=3_600).contains(&ttl), "{ttl}");
+        // An expiry alone is a change, and Never takes it away.
+        let rid = open("HGETALL user:9").await;
+        let persist = RowEdits {
+            expire: Some(Expiry::Never),
+            ..RowEdits::default()
+        };
+        assert_eq!(
+            rt.edit_review(rid, 0, &persist).await.unwrap(),
+            ["PERSIST user:9"]
+        );
+        rt.edit_apply(rid, 0, &persist).await.unwrap();
+        assert_eq!(ttl_of("user:9").await, -1);
+        let zero = RowEdits {
+            expire: Some(Expiry::After(0)),
+            ..RowEdits::default()
+        };
+        let refused = rt.edit_apply(rid, 0, &zero).await.unwrap_err();
+        assert!(refused.message.contains("deletes the key"), "{refused:?}");
+        assert_eq!(ttl_of("user:9").await, -1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

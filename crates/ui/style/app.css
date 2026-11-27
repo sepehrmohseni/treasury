@@ -172,6 +172,8 @@ select.copy-as { padding-inline-end: 24px; }
 .cell-input { width: 100%; height: calc(var(--row) - 1px); border: 0; padding: 0 7px; font: inherit; color: var(--ink); background: var(--raised); outline: none; }
 .result-foot .edit-state { margin-inline-start: 0; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 46ch; }
 .result-foot .pending { color: var(--amber); font-weight: 500; }
+.result-foot .expiry-edit { display: inline-flex; gap: 6px; align-items: center; }
+.expiry-amount { width: 7ch; padding: 2px 6px; font: inherit; color: var(--ink); background: var(--raised); border: 1px solid var(--rule); border-radius: 4px; }
 .statements { margin: 0; padding: 10px 12px; max-height: 320px; overflow: auto; background: var(--paper); border: 1px solid var(--rule); border-radius: 4px; font: 12px/1.6 var(--mono); white-space: pre-wrap; word-break: break-word; }
 .result-foot { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; padding: 4px 12px; border-top: 1px solid var(--rule); background: var(--sheet); color: var(--muted); }
 .result-foot > span { white-space: nowrap; }

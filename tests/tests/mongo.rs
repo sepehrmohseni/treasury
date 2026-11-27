@@ -325,6 +325,7 @@ mod docker {
             }],
             deletes: vec![],
             inserts: vec![vec![(col("name"), Some("b".into()))]],
+            expire: None,
         };
         let review = rt.edit_review(rid, 0, &edits).await.unwrap();
         assert_eq!(review.len(), 2, "{review:?}");
@@ -446,6 +447,7 @@ mod docker {
             },
             key_columns: vec!["_id".into()],
             changes,
+            expire: None,
         };
         assert_eq!(
             edit.apply(&change(vec![

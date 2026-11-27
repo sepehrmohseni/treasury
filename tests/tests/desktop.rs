@@ -523,6 +523,37 @@ mod desktop {
         s.wait_text(".statusbar", "Saved. 1 row changed.", 30);
         s.wait_text(&shown(".grid table"), "go", 30);
 
+        // The key's expiry is shown beside its rows, and changes with them.
+        s.wait_text(&shown(".result-foot .expiry"), "Expires: never", 30);
+        s.click_css(&shown(".result-foot .expiry"));
+        s.script_on(
+            &s.wait(".expiry-amount", 10),
+            "arguments[0].value = '2'; \
+             arguments[0].dispatchEvent(new Event('input', { bubbles: true }))",
+        );
+        s.script_on(
+            &s.wait(".expiry-unit", 10),
+            "arguments[0].value = '3600'; \
+             arguments[0].dispatchEvent(new Event('change', { bubbles: true }))",
+        );
+        s.click_css(".expiry-edit .expiry-set");
+        s.wait_text(
+            &shown(".result-foot .expiry"),
+            "Expires in 2 h (unsaved)",
+            10,
+        );
+        s.click_css(&shown(".result-foot .btn.primary"));
+        s.wait_text(".dialog .statements", "EXPIRE user:1 7200", 30);
+        s.click_css(".dialog .btn.primary");
+        s.wait_text(".statusbar", "Saved. The key's expiry changed.", 30);
+        // Read again after the save: 7,200 seconds or just under, depending on the clock.
+        s.wait_script(
+            "const b = document.querySelector('.pane:not([hidden]) .result-foot .expiry'); \
+             return !!b && /^Expires in (2 h|1 h 59 min)$/.test(b.textContent.trim())",
+            30,
+        );
+        shot("19b-redis-expiry");
+
         // A cluster is set up by its nodes, and the form keeps them.
         s.click_css(".side-actions .btn.primary");
         let change = |css: &str, value: &str| {

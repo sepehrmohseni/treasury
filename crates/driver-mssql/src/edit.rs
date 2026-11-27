@@ -248,6 +248,7 @@ mod tests {
                 key: vec![Value::I64(7)],
                 set: vec![("note".into(), Value::Text("it's".into()))],
             }],
+            expire: None,
         };
         let p = plan(&cs);
         assert_eq!(

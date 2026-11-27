@@ -545,6 +545,7 @@ mod docker {
             },
             key_columns: vec!["id".into()],
             changes,
+            expire: None,
         }
     }
 

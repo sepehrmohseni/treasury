@@ -7,7 +7,7 @@
 use crate::{Running, Runtime, guard_error};
 use std::collections::BTreeMap;
 use treasury_core::config::Family;
-use treasury_core::edit::{Changeset, RowChange, TableRef};
+use treasury_core::edit::{Changeset, Expiry, RowChange, TableRef};
 use treasury_core::exec::ValueKind;
 use treasury_core::{Error, Result, Value};
 use treasury_ipc::{CellEdit, EditInfo, RowEdits};
@@ -28,6 +28,8 @@ pub(crate) struct Target {
     kinds: Vec<ValueKind>,
     /// The rows are documents, whose fields take any type.
     documents: bool,
+    /// The rows come from a key with an expiry, which can be changed with them.
+    expires: bool,
 }
 
 /// `schema.table`, for messages. A Redis result's "schema" is its key's type: `the hash user:1`.
@@ -101,7 +103,8 @@ impl Runtime {
     /// Whether the rows of result set `set` can be edited, and which of its columns.
     pub async fn edit_info(&self, rid: u64, set: usize) -> Result<EditInfo> {
         let r = self.running(rid)?;
-        let family = self.live(&r.connection).await?.config.engine.family();
+        let live = self.live(&r.connection).await?;
+        let family = live.config.engine.family();
         Ok(match self.target(&r, set).await? {
             Ok(t) => EditInfo {
                 table: Some(display(&t.table, family)),
@@ -112,11 +115,16 @@ impl Runtime {
                     .map(|(i, c)| c.is_some() && !t.locked.contains(&i))
                     .collect(),
                 reason: None,
+                expiry: match (t.expires, live.session.edit()) {
+                    (true, Some(e)) => e.expiry(&t.table).await?,
+                    _ => None,
+                },
             },
             Err(reason) => EditInfo {
                 table: None,
                 columns: Vec::new(),
                 reason: Some(reason),
+                expiry: None,
             },
         })
     }
@@ -221,6 +229,11 @@ impl Runtime {
         } else {
             Vec::new()
         };
+        // Asked on the session that applies the edits, which has the key's database selected.
+        let expires = match live.session.edit() {
+            Some(e) => e.expiry(&source.table).await?.is_some(),
+            None => false,
+        };
         let target = Target {
             set,
             table: source.table,
@@ -230,6 +243,7 @@ impl Runtime {
             locked,
             kinds: s.columns.iter().map(|c| c.kind).collect(),
             documents,
+            expires,
         };
         *r.edit_target
             .lock()
@@ -240,8 +254,22 @@ impl Runtime {
     /// `edits` as a changeset on the table behind result set `set`.
     async fn changeset(&self, r: &Running, set: usize, edits: &RowEdits) -> Result<Changeset> {
         let target = self.target(r, set).await?.map_err(guard_error)?;
-        if edits.cells.is_empty() && edits.deletes.is_empty() && edits.inserts.is_empty() {
+        if edits.cells.is_empty()
+            && edits.deletes.is_empty()
+            && edits.inserts.is_empty()
+            && edits.expire.is_none()
+        {
             return Err(guard_error("There are no changes to save."));
+        }
+        if edits.expire.is_some() && !target.expires {
+            return Err(guard_error(
+                "These rows do not come from a key that expires.",
+            ));
+        }
+        if edits.expire == Some(Expiry::After(0)) {
+            return Err(guard_error(
+                "An expiry of 0 seconds deletes the key. Give it at least 1 second.",
+            ));
         }
         let value_of = |column: usize, text: Option<&str>| -> Result<(String, Value)> {
             let Some(Some(name)) = target.columns.get(column) else {
@@ -303,6 +331,7 @@ impl Runtime {
             table: target.table,
             key_columns: target.key_columns,
             changes,
+            expire: edits.expire,
         })
     }
 
