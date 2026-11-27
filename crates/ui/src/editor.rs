@@ -52,9 +52,92 @@ pub fn dialect_of(engine: Engine) -> Option<SqlDialect> {
     })
 }
 
-/// The statement that shows the rows of a table, view or collection in the tree, or `None` for
-/// other objects.
+/// How a connection's editor text splits into statements.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lang {
+    /// SQL, split by the dialect's analyzer.
+    Sql(SqlDialect),
+    /// One MongoDB command, which may span lines.
+    Json,
+    /// Redis: one command per line; a line starting with `#` is a comment.
+    Lines,
+}
+
+impl Lang {
+    pub fn of(engine: Engine) -> Self {
+        match (dialect_of(engine), engine.family()) {
+            (Some(d), _) => Lang::Sql(d),
+            (None, treasury_core::config::Family::KeyValue) => Lang::Lines,
+            (None, _) => Lang::Json,
+        }
+    }
+
+    pub fn dialect(self) -> Option<SqlDialect> {
+        match self {
+            Lang::Sql(d) => Some(d),
+            _ => None,
+        }
+    }
+}
+
+/// The byte ranges of the command lines of `text`: not empty, not comments.
+fn command_lines(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            let lead = line.len() - line.trim_start().len();
+            out.push(at + lead..at + lead + trimmed.len());
+        }
+        at += line.len();
+    }
+    out
+}
+
+/// A word of a Redis command, quoted when it must be, as redis-cli reads it.
+fn redis_word(word: &str) -> String {
+    let bare = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| !c.is_whitespace() && !c.is_control() && !matches!(c, '"' | '\'' | '\\'));
+    if bare {
+        return word.to_owned();
+    }
+    format!("{:?}", word)
+}
+
+/// The statement that shows the rows of a table, view or collection in the tree, or the value
+/// of a Redis key, or `None` for other objects.
 pub fn browse_statement(config: &ConnectionConfig, node: &ObjectNode) -> Option<String> {
+    if node.kind == ObjectKind::Key {
+        let key = redis_word(&node.path.leaf()?.name);
+        let read = match node.detail.as_deref() {
+            Some("hash") => format!("HGETALL {key}"),
+            Some("list") => format!("LRANGE {key} 0 -1"),
+            Some("set") => format!("SMEMBERS {key}"),
+            Some("zset") => format!("ZRANGE {key} 0 -1 WITHSCORES"),
+            Some("stream") => format!("XRANGE {key} - + COUNT 1000"),
+            Some("json") => format!("JSON.GET {key} $"),
+            _ => format!("GET {key}"),
+        };
+        let own = config
+            .database
+            .as_deref()
+            .and_then(|d| d.trim_start_matches("db").parse::<i64>().ok())
+            .unwrap_or(0);
+        // A key in another database is read after selecting it.
+        return Some(
+            match node
+                .path
+                .find(ObjectKind::Database)
+                .and_then(|d| d.parse::<i64>().ok())
+            {
+                Some(db) if db != own => format!("SELECT {db}\n{read}"),
+                _ => read,
+            },
+        );
+    }
     if !matches!(
         node.kind,
         ObjectKind::Table
@@ -95,34 +178,50 @@ pub fn browse_statement(config: &ConnectionConfig, node: &ObjectNode) -> Option<
     })
 }
 
-/// Every statement of `text`, in order; a MongoDB command is one statement.
-pub fn statements_of(dialect: Option<SqlDialect>, text: &str) -> Vec<String> {
-    let Some(d) = dialect else {
-        return vec![text.trim().to_owned()];
+/// Every statement of `text`, in order: SQL by its dialect, Redis by line, and a MongoDB command
+/// as one.
+pub fn statements_of(lang: Lang, text: &str) -> Vec<String> {
+    let ranges = match lang {
+        Lang::Json => return vec![text.trim().to_owned()],
+        Lang::Lines => command_lines(text),
+        Lang::Sql(d) => SqlAnalyzer::new(d)
+            .classify(text)
+            .iter()
+            .map(|s| s.range.clone())
+            .collect(),
     };
-    SqlAnalyzer::new(d)
-        .classify(text)
-        .iter()
-        .filter_map(|s| text.get(s.range.clone()))
+    ranges
+        .into_iter()
+        .filter_map(|r| text.get(r))
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
         .collect()
 }
 
-/// The statement to run: the selection, or the statement under the cursor.
-pub fn statement_at(dialect: Option<SqlDialect>, text: &str, start: usize, end: usize) -> String {
+/// The statement to run: the selection, or the statement under the cursor (for Redis, the
+/// command on the cursor's line, or the last one above it).
+pub fn statement_at(lang: Lang, text: &str, start: usize, end: usize) -> String {
     if end > start {
         return text.get(start..end).unwrap_or("").trim().to_owned();
     }
-    let Some(d) = dialect else {
-        return text.trim().to_owned();
+    let ranges = match lang {
+        Lang::Json => return text.trim().to_owned(),
+        Lang::Lines => command_lines(text),
+        Lang::Sql(d) => SqlAnalyzer::new(d)
+            .classify(text)
+            .iter()
+            .map(|s| s.range.clone())
+            .collect(),
     };
-    let statements = SqlAnalyzer::new(d).classify(text);
-    statements
-        .iter()
-        .find(|s| s.range.start <= start && start <= s.range.end + 1)
-        .or(statements.last())
-        .and_then(|s| text.get(s.range.clone()))
+    let found = match lang {
+        Lang::Lines => ranges.iter().rev().find(|r| r.start <= start),
+        _ => ranges
+            .iter()
+            .find(|r| r.start <= start && start <= r.end + 1),
+    };
+    found
+        .or(ranges.last())
+        .and_then(|r| text.get(r.clone()))
         .unwrap_or("")
         .trim()
         .to_owned()
@@ -397,10 +496,11 @@ pub async fn run(
 
 /// The editor's text laid out for reading: SQL through the formatter, MongoDB commands as
 /// indented JSON. `None` when it cannot be laid out without changing it.
-fn formatted(dialect: Option<SqlDialect>, text: &str) -> Option<String> {
-    match dialect {
-        Some(d) => treasury_sql::format::format(d, text),
-        None => reindent_json(text),
+fn formatted(lang: Lang, text: &str) -> Option<String> {
+    match lang {
+        Lang::Sql(d) => treasury_sql::format::format(d, text),
+        Lang::Json => reindent_json(text),
+        Lang::Lines => None,
     }
 }
 
@@ -535,7 +635,8 @@ pub fn Workspace() -> impl IntoView {
             .get()
             .and_then(|id| state.live.with(|m| m.get(&id).cloned()))
     };
-    let dialect = move || config().and_then(|c| dialect_of(c.engine));
+    let lang = move || config().map(|c| Lang::of(c.engine)).unwrap_or(Lang::Json);
+    let dialect = move || lang().dialect();
     let current = move || state.current();
     let text = move || {
         current()
@@ -572,7 +673,7 @@ pub fn Workspace() -> impl IntoView {
         let s = el.selection_start().ok().flatten().unwrap_or(0);
         let e = el.selection_end().ok().flatten().unwrap_or(s);
         let statement = statement_at(
-            config().and_then(|c| dialect_of(c.engine)),
+            lang(),
             &value,
             byte_offset(&value, s),
             byte_offset(&value, e),
@@ -588,6 +689,7 @@ pub fn Workspace() -> impl IntoView {
         let Some((title, statement)) = state.open_rows.get() else {
             return;
         };
+        let statement_for_tab = statement.clone();
         state.open_rows.set(None);
         let Some(connection) = state.active.get_untracked() else {
             return;
@@ -599,16 +701,28 @@ pub fn Workspace() -> impl IntoView {
         });
         state.notice.set(None);
         let l = limit.get_untracked();
+        // A Redis key in another database is read after a SELECT: two commands, run in turn.
+        let parts = statements_of(lang(), &statement);
+        let go = move |id: String| {
+            if parts.len() > 1 {
+                run_all(id, parts, l);
+            } else {
+                start(id, statement.clone(), l);
+            }
+        };
         match existing {
             Some(id) => {
                 tabs::show(id.clone());
-                start(id, statement, l);
+                go(id);
             }
-            None => leptos::task::spawn_local(async move {
-                if let Some(id) = tabs::open(connection, title, statement.clone(), None).await {
-                    start(id, statement, l);
-                }
-            }),
+            None => {
+                let text = statement_for_tab.clone();
+                leptos::task::spawn_local(async move {
+                    if let Some(id) = tabs::open(connection, title, text, None).await {
+                        go(id);
+                    }
+                });
+            }
         }
     });
 
@@ -684,7 +798,7 @@ pub fn Workspace() -> impl IntoView {
             value
         };
         state.notice.set(None);
-        run_all(id, statements_of(dialect(), &text), limit.get_untracked());
+        run_all(id, statements_of(lang(), &text), limit.get_untracked());
     };
 
     // Formats the selection, or all of the text when nothing is selected.
@@ -704,7 +818,13 @@ pub fn Workspace() -> impl IntoView {
         let Some(piece) = value.get(from..to) else {
             return;
         };
-        match formatted(dialect(), piece) {
+        if lang() == Lang::Lines {
+            state.notice.set(Some(
+                "Redis commands are one per line, so there is nothing to lay out.".into(),
+            ));
+            return;
+        }
+        match formatted(lang(), piece) {
             Some(f) if f == piece => {}
             Some(f) => {
                 if !replace_in_editor(&el, s, e, &f) {
@@ -752,7 +872,7 @@ pub fn Workspace() -> impl IntoView {
             .catalogs
             .with_untracked(|m| m.get(&connection).map(|c| c.entries.clone()))
             .unwrap_or_default();
-        let statement = statement_at(Some(d), &value, at, at);
+        let statement = statement_at(Lang::Sql(d), &value, at, at);
         for t in complete::tables_named(d, &statement, &catalog) {
             complete::fetch::columns(&connection, t);
         }
@@ -1067,18 +1187,33 @@ mod tests {
         let text = "SELECT 1;\nSELECT 2;\nSELECT 3";
         let second = text.find("SELECT 2").unwrap() + 3;
         assert_eq!(
-            statement_at(Some(SqlDialect::Postgres), text, second, second),
+            statement_at(Lang::Sql(SqlDialect::Postgres), text, second, second),
             "SELECT 2"
         );
         assert_eq!(
-            statement_at(Some(SqlDialect::Postgres), text, text.len(), text.len()),
+            statement_at(
+                Lang::Sql(SqlDialect::Postgres),
+                text,
+                text.len(),
+                text.len()
+            ),
             "SELECT 3"
         );
         assert_eq!(
-            statement_at(Some(SqlDialect::Postgres), text, 0, 8),
+            statement_at(Lang::Sql(SqlDialect::Postgres), text, 0, 8),
             "SELECT 1"
         );
-        assert_eq!(statement_at(None, " {\"ping\": 1} ", 0, 0), "{\"ping\": 1}");
+        assert_eq!(
+            statement_at(Lang::Json, " {\"ping\": 1} ", 0, 0),
+            "{\"ping\": 1}"
+        );
+        // Redis: the line of the cursor, or the last command above it.
+        let redis = "SET a 1\n# note\nGET a\n\n";
+        assert_eq!(statement_at(Lang::Lines, redis, 2, 2), "SET a 1");
+        assert_eq!(
+            statement_at(Lang::Lines, redis, redis.len(), redis.len()),
+            "GET a"
+        );
     }
 
     fn node(
@@ -1160,7 +1295,7 @@ mod tests {
     fn a_script_splits_into_its_statements() {
         assert_eq!(
             statements_of(
-                Some(SqlDialect::Postgres),
+                Lang::Sql(SqlDialect::Postgres),
                 "create table t (a int);\n\ninsert into t values (1); select * from t;"
             ),
             [
@@ -1169,7 +1304,14 @@ mod tests {
                 "select * from t"
             ]
         );
-        assert_eq!(statements_of(None, " {\"ping\": 1} "), ["{\"ping\": 1}"]);
+        assert_eq!(
+            statements_of(Lang::Json, " {\"ping\": 1} "),
+            ["{\"ping\": 1}"]
+        );
+        assert_eq!(
+            statements_of(Lang::Lines, "# setup\nSET a 1\n\n  GET a\n"),
+            ["SET a 1", "GET a"]
+        );
     }
 
     #[test]
@@ -1188,6 +1330,37 @@ mod tests {
             "{\n  \"a\": \"say \\\"hi\\\"\"\n}"
         );
         assert!(reindent_json("db.users.find({})").is_none());
+    }
+
+    #[test]
+    fn redis_keys_open_with_the_command_for_their_type() {
+        let mut config = ConnectionConfig::new("c", Engine::Redis, "h").unwrap();
+        let key = |db: &str, name: &str, kind: &str| ObjectNode {
+            path: treasury_core::schema::ObjectPath::root()
+                .child(ObjectKind::Database, db)
+                .child(ObjectKind::Key, name),
+            kind: ObjectKind::Key,
+            name: name.into(),
+            expandable: false,
+            detail: Some(kind.into()),
+        };
+        assert_eq!(
+            browse_statement(&config, &key("0", "user:1", "hash")).unwrap(),
+            "HGETALL user:1"
+        );
+        assert_eq!(
+            browse_statement(&config, &key("0", "a b", "string")).unwrap(),
+            "GET \"a b\""
+        );
+        assert_eq!(
+            browse_statement(&config, &key("3", "q", "list")).unwrap(),
+            "SELECT 3\nLRANGE q 0 -1"
+        );
+        config.database = Some("3".into());
+        assert_eq!(
+            browse_statement(&config, &key("3", "q", "zset")).unwrap(),
+            "ZRANGE q 0 -1 WITHSCORES"
+        );
     }
 
     #[test]

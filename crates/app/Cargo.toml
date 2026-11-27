@@ -29,6 +29,7 @@ treasury-driver-postgres.workspace = true
 treasury-driver-mysql.workspace = true
 treasury-driver-mssql.workspace = true
 treasury-driver-mongo.workspace = true
+treasury-driver-redis.workspace = true
 async-trait.workspace = true
 secrecy.workspace = true
 serde.workspace = true

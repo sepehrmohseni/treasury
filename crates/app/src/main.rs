@@ -31,6 +31,8 @@ fn drivers() -> Vec<Arc<dyn Driver>> {
         Arc::new(treasury_driver_mysql::MySqlDriver::mariadb()),
         Arc::new(treasury_driver_mssql::MsSqlDriver),
         Arc::new(treasury_driver_mongo::MongoDriver),
+        Arc::new(treasury_driver_redis::RedisDriver::redis()),
+        Arc::new(treasury_driver_redis::RedisDriver::valkey()),
     ]
 }
 

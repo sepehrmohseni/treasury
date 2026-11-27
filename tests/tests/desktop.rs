@@ -65,6 +65,17 @@ mod desktop {
         let ssh_host = sshd.get_host().await.unwrap().to_string();
         let ssh_port = sshd.get_host_port_ipv4(22.tcp()).await.unwrap();
         let pg_inside = pg.get_bridge_ip_address().await.unwrap();
+        let redis = with_startup(
+            GenericImage::new("redis", "7.4.12-alpine")
+                .with_exposed_port(6379.tcp())
+                .with_wait_for(WaitFor::message_on_stdout("Ready to accept connections")),
+        )
+        .with_cmd(["redis-server", "--requirepass", PASSWORD])
+        .start()
+        .await
+        .expect("start redis");
+        let redis_host = redis.get_host().await.unwrap().to_string();
+        let redis_port = redis.get_host_port_ipv4(6379.tcp()).await.unwrap();
 
         // A fresh profile, so the run starts from the first-launch screen.
         let profile = tempfile::tempdir().unwrap();
@@ -465,6 +476,38 @@ mod desktop {
             "return ![...document.querySelectorAll('.list > .item')].some(e => e.innerText.includes('via-ssh'))",
             10,
         );
+        // Redis: commands one per line, and keys grouped by ":" in the tree.
+        s.click_css(".side-actions .btn.primary");
+        s.keys(
+            &s.wait("#cf-uri", 10),
+            &format!("redis://default:{PASSWORD}@{redis_host}:{redis_port}/0"),
+        );
+        let name = s.wait("#cf-name", 10);
+        s.click(&name);
+        s.keys(&name, "cache");
+        s.click_css(".dialog button[type=submit]");
+        s.wait_text(".toolbar .title", "cache", 30);
+        s.wait_text(".statusbar", "Redis 7.4", 60);
+        let editor = s.wait(".editor textarea", 10);
+        s.script_on(
+            &editor,
+            "arguments[0].value = 'HSET user:1 name ada lang rust\\nHGETALL user:1'; \
+             arguments[0].dispatchEvent(new Event('input', { bubbles: true }))",
+        );
+        s.click_css(".toolbar .run-all");
+        s.wait_text(".statusbar", "Ran all 2 statements.", 30);
+        let tabs = s.wait_text(&shown(".result-tabs"), "2 · Result", 30);
+        assert!(tabs.contains("1 · 2 rows changed"), "{tabs}");
+        s.wait_text(&shown(".grid table"), "ada", 30);
+        s.click(&s.wait_item(".tree .item", "db0", 30));
+        s.click(&s.wait_item(".tree .item", "user:", 30));
+        let key = s.wait_item(".tree .item", "hash", 30);
+        shot("19-redis");
+        s.double_click(&key);
+        s.wait_text(".tab-strip .etab.on", "user:1", 10);
+        s.wait_text(".editor pre", "HGETALL user:1", 10);
+        s.wait_text(&shown(".grid table"), "rust", 30);
+
         s.click(&s.wait_item(".list > .item", "smoke-prod", 10));
         s.wait_text(".toolbar .title", "smoke-prod", 30);
 
@@ -490,10 +533,10 @@ mod desktop {
             10,
         );
         s.wait_text(&shown(".result-tabs"), "2 rows changed", 10);
-        shot("19-dark");
+        shot("20-dark");
         s.click_css(".brand .settings");
         s.wait("#st-theme", 10);
-        shot("20-settings");
+        shot("21-settings");
         s.click_css(".dialog .walkthrough");
         s.wait_text(".tour", "Your first five minutes", 10);
 

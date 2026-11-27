@@ -11,13 +11,32 @@ use treasury_core::config::{
 use treasury_ipc::{ImportPreview, LiveView, Prepared, RowEdits, SavedQueryView, SecretInput};
 
 /// The engines this version connects to.
-const ENGINES: [Engine; 5] = [
+const ENGINES: [Engine; 7] = [
     Engine::Postgres,
     Engine::MySql,
     Engine::MariaDb,
     Engine::SqlServer,
     Engine::MongoDb,
+    Engine::Redis,
+    Engine::Valkey,
 ];
+
+fn is_redis(engine: Engine) -> bool {
+    matches!(engine, Engine::Redis | Engine::Valkey)
+}
+
+/// `"host:port, host:port"` as hosts; `None` when one of them is not in that form.
+fn host_list(text: &str) -> Option<Vec<(String, u16)>> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+        .map(|h| {
+            let (host, port) = h.rsplit_once(':')?;
+            Some((host.trim().to_owned(), port.trim().parse().ok()?))
+        })
+        .collect::<Option<Vec<_>>>()
+        .filter(|l| !l.is_empty())
+}
 
 fn close() {
     ui().dialog.set(Dialog::None);
@@ -256,6 +275,10 @@ fn hop_fields(
 fn auth_choices(engine: Engine) -> &'static [(&'static str, AuthMethod)] {
     match engine {
         Engine::SqlServer => &[("Password", AuthMethod::Password)],
+        Engine::Redis | Engine::Valkey => &[
+            ("Password", AuthMethod::Password),
+            ("None", AuthMethod::None),
+        ],
         Engine::MongoDb => &[
             ("Password", AuthMethod::Password),
             ("Client certificate", AuthMethod::ClientCertificate),
@@ -293,7 +316,21 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
     ];
     let ssh_open = initial.ssh.is_some();
     let certs_open = initial.tls.ca_file.is_some() || initial.tls.client_cert.is_some();
+    // Sentinel: the addresses as typed, made hosts when the form is saved.
+    let sentinels = RwSignal::new(match &initial.endpoint {
+        Endpoint::Hosts { hosts } => hosts
+            .iter()
+            .map(|(h, p)| format!("{h}:{p}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => String::new(),
+    });
     let cfg = RwSignal::new(initial);
+    let sentinel = move || {
+        cfg.with(|c| {
+            is_redis(c.engine) && c.options.get("mode").map(String::as_str) == Some("sentinel")
+        })
+    };
     let password = RwSignal::new(String::new());
     let key_passphrase = RwSignal::new(String::new());
     let ssh_secret = RwSignal::new(String::new());
@@ -339,6 +376,17 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
 
     let save = move |connect: bool| {
         let mut c = cfg.get_untracked();
+        if sentinel() {
+            match host_list(&sentinels.get_untracked()) {
+                Some(hosts) => c.endpoint = Endpoint::Hosts { hosts },
+                None => {
+                    error.set(Some(
+                        "Enter the Sentinels as host:port, separated by commas.".into(),
+                    ));
+                    return;
+                }
+            }
+        }
         if c.name.trim().is_empty() {
             c.name = match &c.endpoint {
                 Endpoint::Host { host, .. } => match &c.database {
@@ -460,7 +508,40 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
                             }).collect_view()}
                         </select>
                     </div>
-                    <div class="field">
+                    {move || cfg.with(|c| is_redis(c.engine)).then(|| view! {
+                        <div class="field">
+                            <label for="cf-topology">"Servers"</label>
+                            <select id="cf-topology" on:change=move |ev| {
+                                let through = event_target_value(&ev) == "Through Sentinel";
+                                cfg.update(|c| if through {
+                                    c.options.insert("mode".into(), "sentinel".into());
+                                } else {
+                                    c.options.remove("mode");
+                                    c.options.remove("master_name");
+                                    if !matches!(c.endpoint, Endpoint::Host { .. }) {
+                                        c.endpoint = Endpoint::Host { host: String::new(), port: c.engine.default_port() };
+                                    }
+                                });
+                            }>
+                                <option selected=move || !sentinel()>"One server"</option>
+                                <option selected=sentinel>"Through Sentinel"</option>
+                            </select>
+                        </div>
+                    })}
+                    <Show when=sentinel>
+                        <div class="field">
+                            <label for="cf-sentinels">"Sentinels"</label>
+                            <input id="cf-sentinels" autocomplete="off" placeholder="host:26379, host2:26379"
+                                prop:value=move || sentinels.get() on:input=move |ev| sentinels.set(event_target_value(&ev)) />
+                        </div>
+                        <div class="field">
+                            <label for="cf-master">"Master name"</label>
+                            <input id="cf-master" autocomplete="off" placeholder="As the Sentinels know it"
+                                prop:value=move || cfg.with(|c| c.options.get("master_name").cloned().unwrap_or_default())
+                                on:input=move |ev| { let v = event_target_value(&ev); cfg.update(|c| { c.options.insert("master_name".into(), v.trim().to_owned()); }); } />
+                        </div>
+                    </Show>
+                    <div class="field" hidden=sentinel>
                         <label for="cf-host">"Host and port"</label>
                         <div class="row2">
                             <input id="cf-host" required prop:value=move || cfg.with(host_of)

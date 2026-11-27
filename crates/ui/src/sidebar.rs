@@ -217,7 +217,15 @@ fn TreeNode(connection: ConnectionId, node: ObjectNode, depth: usize) -> impl In
             .active_config()
             .and_then(|c| crate::editor::browse_statement(&c, &browse))
         {
-            state.open_rows.set(Some((browse.name.clone(), statement)));
+            // A Redis key's tab is named by the whole key, not its last segment.
+            let title = match browse.kind {
+                treasury_core::schema::ObjectKind::Key => browse
+                    .path
+                    .leaf()
+                    .map_or_else(|| browse.name.clone(), |l| l.name.clone()),
+                _ => browse.name.clone(),
+            };
+            state.open_rows.set(Some((title, statement)));
         }
     };
     view! {
