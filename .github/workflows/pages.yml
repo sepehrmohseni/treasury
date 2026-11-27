@@ -8,6 +8,7 @@ on:
       - docs/**
       - scripts/site-downloads.py
       - scripts/test_site_downloads.py
+      - scripts/test_download_os.js
       - .github/workflows/pages.yml
   # For releases published by hand. The release workflow publishes with GITHUB_TOKEN, whose
   # events start no workflows, so its last job asks for this one through workflow_dispatch.
@@ -39,9 +40,10 @@ jobs:
         run: |
           mkdir -p _site
           cp -R site/. _site/
-          # The downloads name the files of every published release, the latest as one card per
-          # platform; with no release yet the page keeps saying so.
+          # The downloads name the files of the latest release, one choice per system; with no
+          # release yet the page keeps saying so.
           python3 -I scripts/test_site_downloads.py
+          node --test scripts/test_download_os.js
           gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > releases.json
           python3 -I scripts/site-downloads.py releases.json _site/index.html
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

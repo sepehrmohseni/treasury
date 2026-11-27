@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Treasury: a database client that reads your SQL before the server does</title>
 <meta name="description" content="Treasury is an open-source database client for PostgreSQL, MySQL, MariaDB, SQL Server, MongoDB, Redis and Valkey. It knows which statements write, counts the rows a change would touch, and keeps production read-only until you unlock it.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
+<script src="download.js" defer></script>
 </head>
 <body>
 <header class="bar">
@@ -46,22 +47,19 @@
     <p class="status">The first release is not out yet.</p>
     <!-- downloads:end -->
     <dl class="facts install-notes">
-      <div>
+      <div data-os="macos">
         <dt>macOS</dt>
         <dd>The app is not notarized by Apple yet, so macOS stops it the first time. Open it once, then choose Open Anyway in System Settings, Privacy &amp; Security.</dd>
       </div>
-      <div>
+      <div data-os="windows">
         <dt>Windows</dt>
         <dd>The installers are not code-signed yet, so SmartScreen may warn you. Choose More info, then Run anyway.</dd>
       </div>
-      <div>
+      <div data-os="linux">
         <dt>Linux</dt>
         <dd>Install the .deb or .rpm with your package manager, or make the AppImage executable and run it. Passwords go to the Secret Service (GNOME Keyring or KWallet).</dd>
       </div>
     </dl>
-    <!-- versions:start -->
-    <!-- Every published version and its files, once there is one. -->
-    <!-- versions:end -->
   </section>
 
   <section class="wrap" id="statements" aria-labelledby="statements-title">

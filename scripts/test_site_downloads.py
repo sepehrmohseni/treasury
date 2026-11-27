@@ -5,6 +5,7 @@ workflow runs them before it builds the page."""
 import importlib.util
 import json
 import pathlib
+import re
 import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -19,10 +20,8 @@ PAGE = """<p>top</p>
     <!-- downloads:start -->
     <p>The first release is not out yet.</p>
     <!-- downloads:end -->
-    <!-- versions:start -->
-    <!-- none -->
-    <!-- versions:end -->
 """
+RELEASES = "https://github.com/o/r/releases"
 
 ALL_FILES = [
     "Treasury_{v}_x64-setup.exe",
@@ -75,56 +74,63 @@ class Releases(unittest.TestCase):
 
 class Page(unittest.TestCase):
     def built(self, releases):
-        return sd.build(PAGE, sd.load_releases(json.dumps(releases)))
+        return sd.build(PAGE, sd.load_releases(json.dumps(releases)), RELEASES)
 
-    def test_each_platform_offers_its_first_package_and_lists_the_rest(self):
+    def panel(self, page, os):
+        return page.split(f'data-os="{os}"')[1].split("</section>")[0]
+
+    def test_each_system_has_a_choice_and_a_panel(self):
         page = self.built([release("0.1.1")])
         self.assertIn("Version 0.1.1", page)
         self.assertNotIn("not out yet", page)
-        self.assertEqual(page.count('<section class="platform"'), 4)
-        windows = page.split('aria-label="Windows x64"')[1].split("</section>")[0]
-        self.assertIn('class="get" href="https://github.com/o/r/releases/download/v0.1.1/Treasury_0.1.1_x64-setup.exe"', windows)
+        choices = re.findall(r'<input type="radio" name="os" id="os-([a-z0-9-]+)" value="\1"( checked)?>', page)
+        self.assertEqual(
+            choices,
+            [("windows", " checked"), ("macos", ""), ("linux-x64", ""), ("linux-arm64", "")],
+        )
+        windows = self.panel(page, "windows")
+        self.assertIn('class="get" href="https://github.com/o/r/releases/download/v0.1.1/Treasury_0.1.1_x64-setup.exe">Download for Windows', windows)
         self.assertIn("Treasury_0.1.1_x64_en-US.msi", windows)
-        linux = page.split('aria-label="Linux x64"')[1].split("</section>")[0]
-        self.assertIn('class="get" href="https://github.com/o/r/releases/download/v0.1.1/Treasury_0.1.1_amd64.AppImage"', linux)
-        self.assertIn(".deb", linux)
+        linux = self.panel(page, "linux-x64")
+        self.assertIn('class="get" href="https://github.com/o/r/releases/download/v0.1.1/Treasury_0.1.1_amd64.AppImage">Download for Linux x64', linux)
+        self.assertIn("Treasury_0.1.1_amd64.deb", linux)
         self.assertIn("14.0 MB", linux)
+        self.assertIn(f'<a href="{RELEASES}">Older versions</a>', page)
         # Signatures and the update feed are for the updater, not for people.
         self.assertNotIn(".sig", page)
+        self.assertNotIn("latest.json", page)
         self.assertIn("SHA256SUMS", page)
 
-    def test_every_version_is_listed_newest_first_with_its_files(self):
-        page = self.built([release("0.1.1"), release("0.1.2"), release("0.2.0", prerelease=True)])
-        versions = page.split("versions:start")[1]
-        order = [versions.index(f'<span class="number">{v}</span>') for v in ("0.2.0", "0.1.2", "0.1.1")]
-        self.assertEqual(order, sorted(order))
-        latest_row = versions.split('<span class="number">0.1.2</span>')[1].split("</summary>")[0]
-        self.assertIn("Latest", latest_row)
-        pre_row = versions.split('<span class="number">0.2.0</span>')[1].split("</summary>")[0]
-        self.assertIn("Pre-release", pre_row)
-        self.assertIn("Treasury_0.1.1_universal.dmg", versions)
-        # The cards show the latest release, not the pre-release.
-        cards = page.split("downloads:start")[1].split("downloads:end")[0]
-        self.assertIn("Version 0.1.2", cards)
-        self.assertNotIn("0.2.0", cards)
+    def test_every_system_the_page_offers_has_its_style_rule(self):
+        css = (HERE.parent / "site" / "style.css").read_text(encoding="utf-8")
+        script = (HERE.parent / "site" / "download.js").read_text(encoding="utf-8")
+        page = self.built([release("0.1.1")])
+        for os in re.findall(r'id="os-([a-z0-9-]+)" value=', page):
+            self.assertIn(f'.os-picker:has(#os-{os}:checked) .platform[data-os="{os}"]', css)
+            self.assertIn(f'"{os}"', script)
 
-    def test_missing_packages_leave_their_platform_out(self):
+    def test_only_the_latest_version_is_offered(self):
+        page = self.built([release("0.1.1"), release("0.1.2"), release("0.2.0", prerelease=True)])
+        self.assertIn("Treasury_0.1.2_universal.dmg", page)
+        self.assertNotIn("Treasury_0.1.1_", page)
+        self.assertNotIn("0.2.0", page)
+
+    def test_missing_packages_leave_their_system_out(self):
         page = self.built([release("0.1.1", files=["Treasury_{v}_universal.dmg", "SHA256SUMS"])])
         self.assertEqual(page.count('<section class="platform"'), 1)
-        empty = self.built([release("0.1.1"), release("0.1.0", files=["SHA256SUMS"])])
-        self.assertIn("This version has no packages.", empty)
+        self.assertIn('id="os-macos" value="macos" checked', page)
         with self.assertRaises(SystemExit):
             self.built([release("0.1.1", files=["SHA256SUMS"])])
 
     def test_names_are_escaped(self):
         r = release("0.1.1")
         r["assets"][0]["browser_download_url"] = 'https://example.com/a"b<c>'
-        page = sd.build(PAGE, [r])
+        page = sd.build(PAGE, [r], RELEASES)
         self.assertIn("https://example.com/a&quot;b&lt;c&gt;", page)
         self.assertNotIn('a"b<c>', page)
 
     def test_no_release_leaves_the_page_alone(self):
-        self.assertEqual(sd.build(PAGE, []), PAGE)
+        self.assertEqual(sd.build(PAGE, [], RELEASES), PAGE)
 
 
 if __name__ == "__main__":

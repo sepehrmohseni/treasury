@@ -368,7 +368,7 @@ table {
   color: var(--muted);
 }
 
-/* Downloads: the latest version as one card per platform, then every version. */
+/* Downloads: a choice per system, the one the browser reports picked by download.js. */
 
 .release-head {
   margin: 0 0 1rem;
@@ -379,20 +379,66 @@ table {
   white-space: nowrap;
 }
 
-.platforms {
+.os-tabs {
+  display: none;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.os-tabs input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.os-tabs label {
+  padding: 0.4rem 0.85rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.os-tabs label:hover {
+  border-color: var(--ink);
+}
+
+.os-tabs input:checked + label {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+  font-weight: 600;
+}
+
+.os-tabs input:focus-visible + label {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
+
+.os-note {
+  margin: 0.75rem 0 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.os-panels {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0 2rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 2.5rem;
+  margin-top: 1.25rem;
 }
 
 .platform {
-  padding: 1rem 0 1.25rem;
+  padding: 1.1rem 0 1.25rem;
   border-top: 1px solid var(--rule-strong);
 }
 
 .platform h3 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   font-weight: 650;
   line-height: 1.3;
 }
@@ -407,16 +453,16 @@ table {
 
 .get {
   display: inline-flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.15rem 0.6rem;
+  flex-direction: column;
+  gap: 0.1rem;
   margin-top: 0.9rem;
-  padding: 0.55rem 0.95rem;
+  padding: 0.7rem 1.2rem;
   border-radius: 3px;
   background: var(--green);
   color: var(--on-green);
-  font-weight: 600;
-  font-size: 0.95rem;
+  font-weight: 650;
+  font-size: 1.05rem;
+  line-height: 1.3;
   text-decoration: none;
 }
 
@@ -429,9 +475,9 @@ table {
   outline-offset: 3px;
 }
 
-.get .size {
-  color: inherit;
-  opacity: 0.8;
+.get .what {
+  font: 400 0.8rem/1.4 var(--mono);
+  opacity: 0.85;
 }
 
 .size {
@@ -440,145 +486,65 @@ table {
   white-space: nowrap;
 }
 
-.also {
+.platform .also {
   margin: 0.8rem 0 0;
-  padding: 0;
-  list-style: none;
   font-size: 0.92rem;
-}
-
-.also li + li {
-  margin-top: 0.2rem;
-}
-
-.platform .note {
-  margin: 0.8rem 0 0;
-  font-size: 0.86rem;
   color: var(--muted);
 }
 
-.release-links a + a {
-  margin-left: 1.25rem;
+.platform .note {
+  margin: 0.6rem 0 0;
+  max-width: 36rem;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.release-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.25rem;
 }
 
 .install-notes {
   margin-top: 2rem;
 }
 
-.versions-head {
-  margin-top: 3.5rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--rule-strong);
-}
+/* Where :has() works, one system shows at a time; elsewhere every system is listed. */
+@supports selector(:has(*)) {
+  .os-tabs {
+    display: flex;
+  }
 
-.versions-head h3 {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 650;
-}
+  .os-panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
 
-.versions-head p {
-  margin: 0.3rem 0 0;
-  max-width: 40rem;
-  color: var(--muted);
-}
+  .os-panels .platform {
+    display: none;
+  }
 
-.versions {
-  margin-top: 1rem;
-  border-top: 1px solid var(--rule);
-}
+  .os-picker:has(#os-windows:checked) .platform[data-os="windows"],
+  .os-picker:has(#os-macos:checked) .platform[data-os="macos"],
+  .os-picker:has(#os-linux-x64:checked) .platform[data-os="linux-x64"],
+  .os-picker:has(#os-linux-arm64:checked) .platform[data-os="linux-arm64"] {
+    display: block;
+  }
 
-.version {
-  border-bottom: 1px solid var(--rule);
-}
+  /* The first-launch note for the chosen system only, once there is a release to choose. */
+  #download:has(.os-picker) .install-notes {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 40rem;
+  }
 
-.version summary {
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  padding: 0.75rem 0;
-  cursor: pointer;
-  list-style: none;
-}
+  #download:has(.os-picker) .install-notes > div {
+    display: none;
+  }
 
-.version summary::-webkit-details-marker {
-  display: none;
-}
-
-.version summary::before {
-  content: "";
-  flex: none;
-  width: 0.45rem;
-  height: 0.45rem;
-  border: solid var(--muted);
-  border-width: 0 1.5px 1.5px 0;
-  transform: translateY(-0.1rem) rotate(-45deg);
-  transition: transform 0.15s ease;
-}
-
-.version[open] summary::before {
-  transform: translateY(-0.2rem) rotate(45deg);
-}
-
-.version summary:focus-visible {
-  outline: 2px solid var(--link);
-  outline-offset: 2px;
-}
-
-.version .number {
-  font: 500 1rem/1.4 var(--mono);
-}
-
-.version .pill {
-  margin-right: 0;
-}
-
-.version .date {
-  margin-left: auto;
-  font: 400 0.85rem/1.4 var(--mono);
-  color: var(--muted);
-}
-
-.version-files {
-  margin: 0 0 0 1.2rem;
-}
-
-.version-files > div {
-  display: grid;
-  grid-template-columns: 11rem minmax(0, 1fr);
-  gap: 0.25rem 1.5rem;
-  padding: 0.55rem 0;
-  border-top: 1px solid var(--rule);
-}
-
-.version-files dt {
-  font-weight: 600;
-  font-size: 0.92rem;
-}
-
-.version-files dd {
-  margin: 0;
-}
-
-.files {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.files a {
-  font-family: var(--mono);
-  font-size: 0.86rem;
-  overflow-wrap: anywhere;
-}
-
-.version .release-links {
-  margin: 0.4rem 0 1rem 1.2rem;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .version summary::before {
-    transition: none;
+  #download:has(#os-windows:checked) .install-notes > [data-os="windows"],
+  #download:has(#os-macos:checked) .install-notes > [data-os="macos"],
+  #download:has(#os-linux-x64:checked) .install-notes > [data-os="linux"],
+  #download:has(#os-linux-arm64:checked) .install-notes > [data-os="linux"] {
+    display: block;
   }
 }
 
@@ -699,10 +665,6 @@ table {
     grid-template-columns: 1fr;
   }
 
-  .platforms {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .facts {
     grid-template-columns: 1fr;
   }
@@ -792,19 +754,7 @@ table {
     white-space: normal;
   }
 
-  .platforms {
-    grid-template-columns: 1fr;
-  }
-
-  .version-files {
-    margin-left: 0;
-  }
-
-  .version-files > div {
-    grid-template-columns: 1fr;
-  }
-
-  .version .release-links {
-    margin-left: 0;
+  .os-panels {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

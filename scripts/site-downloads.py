@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fills the project page's downloads from the published releases.
+"""Fills the project page's downloads from the latest release.
 
 usage: scripts/site-downloads.py RELEASES_JSON INDEX_HTML
 
@@ -8,8 +8,10 @@ repos/OWNER/REPO/releases`), as one list or as a list of pages, or an empty file
 are none, in which case the page keeps its "not out yet" text. The Pages workflow runs this
 when it builds the site, so every link names a file that exists.
 
-It fills three places: the release line at the top, one card per platform for the latest
-version, and the list of every version with its files.
+It fills the release line at the top and the download section: one choice per system and, for
+each, the package that suits most people with the other formats beside it. site/download.js
+then picks the system the visitor's browser reports. Older versions are on GitHub's releases
+page.
 """
 
 import html
@@ -17,10 +19,12 @@ import json
 import re
 import sys
 
-# Each platform: its heading, the detail under it, and its packages as (file name ending,
-# label). The first package a release has is the one the card offers first.
+# Each platform: the id the page and site/download.js know it by, its name, the detail beside
+# it, its packages as (file name ending, label), and a note. The first package a release has is
+# the one offered first.
 PLATFORMS = [
     (
+        "windows",
         "Windows",
         "x64",
         [("_x64-setup.exe", "Installer (.exe)"), ("_x64_en-US.msi", "Windows Installer (.msi)")],
@@ -28,12 +32,14 @@ PLATFORMS = [
         "for every user of the computer.",
     ),
     (
+        "macos",
         "macOS",
         "Apple silicon and Intel",
         [("_universal.dmg", "Disk image (.dmg)")],
         "One app for both kinds of Mac.",
     ),
     (
+        "linux-x64",
         "Linux",
         "x64",
         [("_amd64.AppImage", "AppImage"), ("_amd64.deb", ".deb"), (".x86_64.rpm", ".rpm")],
@@ -41,6 +47,7 @@ PLATFORMS = [
         "package manager.",
     ),
     (
+        "linux-arm64",
         "Linux",
         "arm64",
         [("_aarch64.AppImage", "AppImage"), ("_arm64.deb", ".deb"), (".aarch64.rpm", ".rpm")],
@@ -96,18 +103,18 @@ def date(release):
 
 
 def platform_files(release):
-    """For each platform the release has packages for: its heading, detail, note and the
+    """For each platform the release has packages for: its id, name, detail, note and the
     packages as (label, asset), the one offered first leading."""
     assets = release.get("assets", [])
     out = []
-    for name, detail, packages, note in PLATFORMS:
+    for key, name, detail, packages, note in PLATFORMS:
         found = []
         for ending, label in packages:
             for asset in sorted(assets, key=lambda a: a["name"]):
                 if asset["name"].endswith(ending):
                     found.append((label, asset))
         if found:
-            out.append((name, detail, note, found))
+            out.append((key, name, detail, note, found))
     return out
 
 
@@ -115,91 +122,59 @@ def asset_named(release, name):
     return next((a for a in release.get("assets", []) if a["name"] == name), None)
 
 
-def render_cards(release):
-    cards = []
-    for name, detail, note, found in platform_files(release):
+def render_downloads(release, all_releases_url):
+    platforms = platform_files(release)
+    if not platforms:
+        sys.exit(f"release {release['tag_name']} has none of the expected packages")
+    choices = []
+    panels = []
+    for i, (key, name, detail, note, found) in enumerate(platforms):
+        where = name if key in ("windows", "macos") else f"{name} {detail}"
+        checked = " checked" if i == 0 else ""
+        choices.append(
+            f'        <input type="radio" name="os" id="os-{key}" value="{key}"{checked}>'
+            f'<label for="os-{key}">{esc(where)}</label>'
+        )
         (first_label, first), rest = found[0], found[1:]
-        where = f"{name} {detail}"
-        others = "".join(
-            f'\n            <li><a href="{esc(a["browser_download_url"])}">{esc(label)}'
+        others = ", ".join(
+            f'<a href="{esc(a["browser_download_url"])}">{esc(label)}'
             f'<span class="visually-hidden"> for {esc(where)}</span></a> '
-            f'<span class="size">{megabytes(a["size"])}</span></li>'
+            f'<span class="size">{megabytes(a["size"])}</span>'
             for label, a in rest
         )
-        also = f'\n          <ul class="also">{others}\n          </ul>' if rest else ""
-        cards.append(
-            f'      <section class="platform" aria-label="{esc(where)}">\n'
-            f'        <h3>{esc(name)} <span class="detail">{esc(detail)}</span></h3>\n'
-            f'        <a class="get" href="{esc(first["browser_download_url"])}">{esc(first_label)}'
-            f'<span class="visually-hidden"> for {esc(where)}</span>'
-            f' <span class="size">{megabytes(first["size"])}</span></a>{also}\n'
-            f'        <p class="note">{esc(note)}</p>\n'
-            f"      </section>"
+        also = f'\n          <p class="also">Also as {others}</p>' if rest else ""
+        panels.append(
+            f'        <section class="platform" data-os="{key}" aria-label="{esc(name)} {esc(detail)}">\n'
+            f'          <h3>{esc(name)} <span class="detail">{esc(detail)}</span></h3>\n'
+            f'          <a class="get" href="{esc(first["browser_download_url"])}">'
+            f"Download for {esc(where)}"
+            f' <span class="what">{esc(first_label)}, {megabytes(first["size"])}</span></a>{also}\n'
+            f'          <p class="note">{esc(note)}</p>\n'
+            f"        </section>"
         )
-    if not cards:
-        sys.exit(f"release {release['tag_name']} has none of the expected packages")
     sums = asset_named(release, "SHA256SUMS")
     links = [f'<a href="{esc(release["html_url"])}">Release notes and every file</a>']
     if sums:
         links.append(f'<a href="{esc(sums["browser_download_url"])}">SHA256SUMS</a>')
+    links.append(f'<a href="{esc(all_releases_url)}">Older versions</a>')
     return "\n".join(
         [
             f'    <p class="release-head"><span class="pill">Latest</span> Version '
             f'{esc(version(release))}, released <span class="when">{esc(date(release))}</span></p>',
-            '    <div class="platforms">',
-            *cards,
+            '    <div class="os-picker">',
+            '      <fieldset class="os-tabs">',
+            '        <legend class="visually-hidden">Your system</legend>',
+            *choices,
+            "      </fieldset>",
+            '      <p class="os-note" id="os-picked" hidden>Picked for the system your browser '
+            "reports. Choose another above if you need a different one.</p>",
+            '      <p class="os-note" id="os-phone" hidden>There is no app for phones and tablets '
+            "yet. These downloads are for Windows, macOS and Linux computers.</p>",
+            '      <div class="os-panels">',
+            *panels,
+            "      </div>",
             "    </div>",
             f'    <p class="status release-links">{" ".join(links)}</p>',
-        ]
-    )
-
-
-def render_versions(releases, newest):
-    rows = []
-    for release in releases:
-        pills = []
-        if newest is not None and release["tag_name"] == newest["tag_name"]:
-            pills.append('<span class="pill">Latest</span>')
-        if release.get("prerelease"):
-            pills.append('<span class="pill">Pre-release</span>')
-        groups = []
-        for name, detail, _note, found in platform_files(release):
-            files = "".join(
-                f'<li><a href="{esc(a["browser_download_url"])}">{esc(a["name"])}</a> '
-                f'<span class="size">{megabytes(a["size"])}</span></li>'
-                for _label, a in found
-            )
-            groups.append(
-                f"          <div><dt>{esc(name)} {esc(detail)}</dt>"
-                f'<dd><ul class="files">{files}</ul></dd></div>'
-            )
-        sums = asset_named(release, "SHA256SUMS")
-        links = [f'<a href="{esc(release["html_url"])}">Release notes</a>']
-        if sums:
-            links.append(f'<a href="{esc(sums["browser_download_url"])}">SHA256SUMS</a>')
-        body = (
-            '\n        <dl class="version-files">\n' + "\n".join(groups) + "\n        </dl>"
-            if groups
-            else '\n        <p class="status">This version has no packages.</p>'
-        )
-        rows.append(
-            '      <details class="version">\n'
-            f'        <summary><span class="number">{esc(version(release))}</span>'
-            f'{"".join(pills)}<span class="date">{esc(date(release))}</span></summary>'
-            f"{body}\n"
-            f'        <p class="status release-links">{" ".join(links)}</p>\n'
-            "      </details>"
-        )
-    return "\n".join(
-        [
-            '    <div class="versions-head">',
-            '      <h3 id="versions-title">All versions</h3>',
-            "      <p>Installed copies update themselves when a new version is out. These are for "
-            "installing a particular version again.</p>",
-            "    </div>",
-            '    <div class="versions" aria-labelledby="versions-title">',
-            *rows,
-            "    </div>",
         ]
     )
 
@@ -212,14 +187,14 @@ def render_release_line(release):
     )
 
 
-def build(page, releases):
-    """`page` with its downloads filled from `releases`, or unchanged when there are none."""
+def build(page, releases, all_releases_url):
+    """`page` with its downloads filled from the latest of `releases`, or unchanged when there
+    is none."""
     newest = latest(releases)
     if newest is None:
         return page
     page = fill(page, "release", render_release_line(newest))
-    page = fill(page, "downloads", render_cards(newest))
-    page = fill(page, "versions", render_versions(releases, newest))
+    page = fill(page, "downloads", render_downloads(newest, all_releases_url))
     return page
 
 
@@ -228,14 +203,17 @@ def main():
         sys.exit(__doc__)
     releases_path, page_path = sys.argv[1:]
     releases = load_releases(open(releases_path, encoding="utf-8").read())
-    if latest(releases) is None:
+    newest = latest(releases)
+    if newest is None:
         print("no release yet; the page keeps its placeholder")
         return
+    # The releases page is the release's own URL without `/tag/<tag>`.
+    all_releases = newest["html_url"].rsplit("/tag/", 1)[0]
     page = open(page_path, encoding="utf-8").read()
-    page = build(page, releases)
+    page = build(page, releases, all_releases)
     with open(page_path, "w", encoding="utf-8") as f:
         f.write(page)
-    print(f"filled the downloads of {len(releases)} version(s), latest {version(latest(releases))}")
+    print(f"filled the downloads of version {version(newest)}")
 
 
 if __name__ == "__main__":
