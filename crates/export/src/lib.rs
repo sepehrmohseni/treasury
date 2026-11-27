@@ -26,6 +26,8 @@ pub enum Format {
         delimiter: u8,
         /// Text written for NULL.
         null: String,
+        /// Whether the first line names the columns.
+        header: bool,
     },
     /// One JSON object per line.
     Ndjson,
@@ -33,6 +35,8 @@ pub enum Format {
     Json,
     /// Apache Parquet.
     Parquet,
+    /// A Markdown table, for pasting into notes and issues (copy only).
+    Markdown,
     /// INSERT statements for `table` in `dialect`.
     SqlInsert {
         /// The dialect to write.
@@ -50,6 +54,16 @@ impl Format {
         Format::Csv {
             delimiter: b',',
             null: String::new(),
+            header: true,
+        }
+    }
+
+    /// Values separated by tabs, without a header: what a spreadsheet takes from the clipboard.
+    pub fn tsv() -> Self {
+        Format::Csv {
+            delimiter: b'\t',
+            null: String::new(),
+            header: false,
         }
     }
 }

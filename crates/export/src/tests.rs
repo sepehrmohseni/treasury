@@ -56,6 +56,7 @@ fn csv_quotes_and_marks_null() {
         &Format::Csv {
             delimiter: b',',
             null: "NULL".into(),
+            header: true,
         },
     )
     .unwrap();
@@ -260,4 +261,30 @@ async fn cancelling_leaves_no_file() {
 #[test]
 fn parquet_cannot_be_copied_as_text() {
     assert!(render_rows(&cols(), &[], &Format::Parquet).is_err());
+}
+
+#[test]
+fn markdown_tables_keep_each_row_on_one_line() {
+    let columns = vec![
+        Column::new("name", "text", ValueKind::Text),
+        Column::new("note", "text", ValueKind::Text),
+    ];
+    let rows = vec![
+        vec![Value::Text("a|b".into()), Value::Text("two\nlines".into())],
+        vec![Value::Text("c".into()), Value::Null],
+    ];
+    let text = render_rows(&columns, &rows, &Format::Markdown).unwrap();
+    assert_eq!(
+        text,
+        "| name | note |\n| --- | --- |\n| a\\|b | two<br>lines |\n| c |  |\n"
+    );
+}
+
+#[test]
+fn tsv_for_the_clipboard_has_no_header() {
+    let text = render_rows(&cols(), &[row(1)], &Format::tsv()).unwrap();
+    let header = render_rows(&cols(), &[], &Format::csv()).unwrap();
+    let first = header.trim_end().split(',').next().unwrap().to_owned();
+    assert!(!text.starts_with(&first), "{text}");
+    assert!(text.starts_with('1') && text.contains('\t'), "{text}");
 }

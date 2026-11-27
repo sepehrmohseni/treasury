@@ -1,4 +1,4 @@
-//! Text encodings: CSV, NDJSON, JSON and SQL INSERT.
+//! Text encodings: CSV, NDJSON, JSON, Markdown and SQL INSERT.
 
 use crate::{Format, io_error};
 use std::io::Write;
@@ -35,6 +35,18 @@ fn object(columns: &[Column], row: &Row) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
+/// A Markdown table cell: pipes escaped, line breaks as `<br>`, so the row stays one line.
+fn markdown_cell(text: &str) -> String {
+    text.replace('|', "\\|")
+        .replace("\r\n", "<br>")
+        .replace(['\n', '\r'], "<br>")
+}
+
+fn markdown_row(cells: impl Iterator<Item = String>) -> String {
+    let cells: Vec<String> = cells.map(|c| markdown_cell(&c)).collect();
+    format!("| {} |\n", cells.join(" | "))
+}
+
 fn write(out: &mut dyn Write, bytes: &[u8]) -> Result<()> {
     out.write_all(bytes).map_err(|e| io_error(&e))
 }
@@ -55,11 +67,21 @@ fn csv_record(delimiter: u8, fields: &[String], out: &mut dyn Write) -> Result<(
 /// Writes what comes before the first row (CSV header, JSON opening bracket).
 pub fn write_prologue(format: &Format, columns: &[Column], out: &mut dyn Write) -> Result<()> {
     match format {
-        Format::Csv { delimiter, .. } => {
+        Format::Csv {
+            delimiter, header, ..
+        } => {
+            if !header {
+                return Ok(());
+            }
             let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
             csv_record(*delimiter, &names, out)
         }
         Format::Json => write(out, b"["),
+        Format::Markdown => {
+            let head = markdown_row(columns.iter().map(|c| c.name.clone()));
+            let rule = format!("|{}\n", " --- |".repeat(columns.len().max(1)));
+            write(out, format!("{head}{rule}").as_bytes())
+        }
         Format::Ndjson | Format::SqlInsert { .. } | Format::Parquet => Ok(()),
     }
 }
@@ -73,7 +95,9 @@ pub fn write_row(
     out: &mut dyn Write,
 ) -> Result<()> {
     match format {
-        Format::Csv { delimiter, null } => {
+        Format::Csv {
+            delimiter, null, ..
+        } => {
             let fields: Vec<String> = row.iter().map(|v| csv_field(v, null)).collect();
             csv_record(*delimiter, &fields, out)
         }
@@ -92,6 +116,10 @@ pub fn write_row(
                 .map_err(|e| Error::internal(format!("JSON encoding failed: {e}")))?;
             write(out, &obj)
         }
+        Format::Markdown => write(
+            out,
+            markdown_row(row.iter().map(|v| csv_field(v, ""))).as_bytes(),
+        ),
         Format::SqlInsert {
             dialect,
             schema,
