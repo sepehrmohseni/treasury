@@ -508,6 +508,40 @@ mod desktop {
         s.wait_text(".editor pre", "HGETALL user:1", 10);
         s.wait_text(&shown(".grid table"), "rust", 30);
 
+        // A cluster is set up by its nodes, and the form keeps them.
+        s.click_css(".side-actions .btn.primary");
+        let change = |css: &str, value: &str| {
+            s.script_on(
+                &s.wait(css, 10),
+                &format!(
+                    "arguments[0].value = '{value}'; \
+                     arguments[0].dispatchEvent(new Event('change', {{ bubbles: true }}))"
+                ),
+            );
+        };
+        change("#cf-engine", "Redis");
+        change("#cf-topology", "A cluster");
+        s.keys(&s.wait("#cf-sentinels", 10), "node-a:7000, node-b:7001");
+        let name = s.wait("#cf-name", 10);
+        s.click(&name);
+        s.keys(&name, "grid-cluster");
+        s.click(&s.wait_item(".dialog footer .btn", "Save", 10));
+        s.double_click(&s.wait_item(".list > .item", "grid-cluster", 10));
+        s.wait("#cf-sentinels", 10);
+        assert_eq!(
+            s.script(
+                "return [document.querySelector('#cf-topology').value, \
+                 document.querySelector('#cf-sentinels').value]"
+            ),
+            serde_json::json!(["A cluster", "node-a:7000, node-b:7001"])
+        );
+        s.click_css(".dialog .delete-connection");
+        s.click_css(".dialog .confirm-delete");
+        s.wait_script(
+            "return ![...document.querySelectorAll('.list > .item')].some(e => e.innerText.includes('grid-cluster'))",
+            10,
+        );
+
         s.click(&s.wait_item(".list > .item", "smoke-prod", 10));
         s.wait_text(".toolbar .title", "smoke-prod", 30);
 

@@ -326,11 +326,16 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
         _ => String::new(),
     });
     let cfg = RwSignal::new(initial);
-    let sentinel = move || {
+    // Redis topology: one server, through Sentinel, or a cluster; the last two take host lists.
+    let mode = move || {
         cfg.with(|c| {
-            is_redis(c.engine) && c.options.get("mode").map(String::as_str) == Some("sentinel")
+            is_redis(c.engine)
+                .then(|| c.options.get("mode").cloned())
+                .flatten()
         })
     };
+    let sentinel = move || mode().as_deref() == Some("sentinel");
+    let listed = move || matches!(mode().as_deref(), Some("sentinel" | "cluster"));
     let password = RwSignal::new(String::new());
     let key_passphrase = RwSignal::new(String::new());
     let ssh_secret = RwSignal::new(String::new());
@@ -376,12 +381,12 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
 
     let save = move |connect: bool| {
         let mut c = cfg.get_untracked();
-        if sentinel() {
+        if listed() {
             match host_list(&sentinels.get_untracked()) {
                 Some(hosts) => c.endpoint = Endpoint::Hosts { hosts },
                 None => {
                     error.set(Some(
-                        "Enter the Sentinels as host:port, separated by commas.".into(),
+                        "Enter the hosts as host:port, separated by commas.".into(),
                     ));
                     return;
                 }
@@ -512,28 +517,42 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
                         <div class="field">
                             <label for="cf-topology">"Servers"</label>
                             <select id="cf-topology" on:change=move |ev| {
-                                let through = event_target_value(&ev) == "Through Sentinel";
-                                cfg.update(|c| if through {
-                                    c.options.insert("mode".into(), "sentinel".into());
-                                } else {
-                                    c.options.remove("mode");
-                                    c.options.remove("master_name");
-                                    if !matches!(c.endpoint, Endpoint::Host { .. }) {
-                                        c.endpoint = Endpoint::Host { host: String::new(), port: c.engine.default_port() };
+                                let chosen = match event_target_value(&ev).as_str() {
+                                    "Through Sentinel" => Some("sentinel"),
+                                    "A cluster" => Some("cluster"),
+                                    _ => None,
+                                };
+                                cfg.update(|c| match chosen {
+                                    Some(m) => {
+                                        c.options.insert("mode".into(), m.into());
+                                        if m == "cluster" {
+                                            c.options.remove("master_name");
+                                        }
+                                    }
+                                    None => {
+                                        c.options.remove("mode");
+                                        c.options.remove("master_name");
+                                        if !matches!(c.endpoint, Endpoint::Host { .. }) {
+                                            c.endpoint = Endpoint::Host { host: String::new(), port: c.engine.default_port() };
+                                        }
                                     }
                                 });
                             }>
-                                <option selected=move || !sentinel()>"One server"</option>
+                                <option selected=move || mode().is_none()>"One server"</option>
                                 <option selected=sentinel>"Through Sentinel"</option>
+                                <option selected=move || mode().as_deref() == Some("cluster")>"A cluster"</option>
                             </select>
                         </div>
                     })}
-                    <Show when=sentinel>
+                    <Show when=listed>
                         <div class="field">
-                            <label for="cf-sentinels">"Sentinels"</label>
-                            <input id="cf-sentinels" autocomplete="off" placeholder="host:26379, host2:26379"
+                            <label for="cf-sentinels">{move || if sentinel() { "Sentinels" } else { "Nodes" }}</label>
+                            <input id="cf-sentinels" autocomplete="off"
+                                placeholder=move || if sentinel() { "host:26379, host2:26379" } else { "Any of its nodes: host:6379, host2:6379" }
                                 prop:value=move || sentinels.get() on:input=move |ev| sentinels.set(event_target_value(&ev)) />
                         </div>
+                    </Show>
+                    <Show when=sentinel>
                         <div class="field">
                             <label for="cf-master">"Master name"</label>
                             <input id="cf-master" autocomplete="off" placeholder="As the Sentinels know it"
@@ -541,10 +560,10 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
                                 on:input=move |ev| { let v = event_target_value(&ev); cfg.update(|c| { c.options.insert("master_name".into(), v.trim().to_owned()); }); } />
                         </div>
                     </Show>
-                    <div class="field" hidden=sentinel>
+                    <div class="field" hidden=listed>
                         <label for="cf-host">"Host and port"</label>
                         <div class="row2">
-                            <input id="cf-host" required prop:value=move || cfg.with(host_of)
+                            <input id="cf-host" required=move || !listed() prop:value=move || cfg.with(host_of)
                                 on:input=move |ev| cfg.update(|c| c.endpoint = Endpoint::Host { host: event_target_value(&ev), port: port_of(c) }) />
                             <input aria-label="Port" type="number" min="1" max="65535" prop:value=move || cfg.with(port_of).to_string()
                                 on:input=move |ev| {
