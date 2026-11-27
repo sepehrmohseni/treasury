@@ -62,18 +62,18 @@ an APK signed with any other certificate.
 
 ## Repository secrets
 
-Names only; the values live in the files above.
+Names only; the values live with the maintainer's keys.
 
-| Secret | Source file | Used by |
+| Secret | Value | Used by |
 |---|---|---|
-| `TAURI_SIGNING_PRIVATE_KEY` | `updater.key` (contents) | signing the desktop update files |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | `updater.key.password` | the same |
+| `TAURI_SIGNING_PRIVATE_KEY` | the updater private key file's contents | signing the desktop update files |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | that key's password | the same |
 | `ANDROID_KEYSTORE_BASE64` | `android-release.jks.base64` | signing the APK and AAB |
 | `ANDROID_KEYSTORE_PASSWORD` | `android-keystore.password` | the same |
 
-The release workflow uses the two `TAURI_SIGNING_*` secrets and stops with an error when they
-are missing. The Android secrets are for the Android app, which is on the roadmap and not built
-yet.
+The two `TAURI_SIGNING_*` secrets are set, and the release workflow stops with an error when
+they are missing. The Android secrets are for the Android app, which is on the roadmap and not
+built yet, so they are not set.
 
 Optional, not set: Apple Developer ID and notarization (macOS), Apple distribution certificate
 and provisioning profile (iOS), and Windows code signing. Without them, macOS builds are signed
