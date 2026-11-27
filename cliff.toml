@@ -8,6 +8,7 @@ header = """
 
 Notable changes to Treasury, grouped as Added, Changed and Fixed. Versions follow Semantic
 Versioning.
+
 """
 body = """
 {% if version %}\
@@ -34,6 +35,9 @@ require_conventional = false
 split_commits = false
 protect_breaking_commits = true
 commit_parsers = [
+  # Fixes to the build tooling and to lint findings change nothing anyone using Treasury sees.
+  { message = "^fix\\(xtask\\)", skip = true },
+  { message = "(?i)^fix(\\([^)]*\\))?: satisfy clippy", skip = true },
   { message = "^feat", group = "<!-- 0 -->Added" },
   { message = "^fix", group = "<!-- 2 -->Fixed" },
   { message = "^(perf|refactor)", group = "<!-- 1 -->Changed" },
