@@ -710,14 +710,14 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
                     <Show when=move || cfg.with(|c| c.environment == Environment::Production)>
                         <div class="note">"Production connections open read-only. Writes need \"Unlock writes\", and destructive statements need the connection name typed."</div>
                     </Show>
-                    {move || error.get().map(|e| view! { <div class="note danger" role="alert">{e}</div> })}
-                    <Show when=move || confirm_delete.get()>
-                        <div class="note danger" role="alert">{move || format!(
-                            "Delete \"{}\"? Its saved passwords, tabs and history go with it. This cannot be undone.",
-                            cfg.with(|c| c.name.clone())
-                        )}</div>
-                    </Show>
                 </div>
+                {move || error.get().map(|e| view! { <div class="note danger dialog-alert" role="alert">{e}</div> })}
+                <Show when=move || confirm_delete.get()>
+                    <div class="note danger dialog-alert" role="alert">{move || format!(
+                        "Delete \"{}\"? Its saved passwords, tabs and history go with it. This cannot be undone.",
+                        cfg.with(|c| c.name.clone())
+                    )}</div>
+                </Show>
                 <footer>
                     {existing.then(|| view! {
                         <Show when=move || confirm_delete.get() fallback=move || view! {
@@ -797,8 +797,8 @@ fn ImportDialog(path: String, preview: ImportPreview) -> impl IntoView {
                             {preview.skipped.iter().map(|(n, why)| view! { <div>{format!("{n}: {why}")}</div> }).collect_view()}
                         </div>
                     })}
-                    {move || error.get().map(|e| view! { <div class="note danger" role="alert">{e}</div> })}
                 </div>
+                {move || error.get().map(|e| view! { <div class="note danger dialog-alert" role="alert">{e}</div> })}
                 <footer>
                     <button class="btn" on:click=move |_| close()>"Cancel"</button>
                     <button class="btn primary" on:click=apply disabled=move || chosen.with(Vec::is_empty)>
@@ -962,8 +962,8 @@ fn ReviewDialog(
                         if statements.len() == 1 { "This statement will".to_owned() } else { format!("These {} statements will", statements.len()) }
                     )}</p>
                     <pre class="statements">{statements.join("\n")}</pre>
-                    {move || error.get().map(|e| view! { <div class="note danger" role="alert">{e}</div> })}
                 </div>
+                {move || error.get().map(|e| view! { <div class="note danger dialog-alert" role="alert">{e}</div> })}
                 <footer>
                     <button class="btn" on:click=move |_| close()>"Keep editing"</button>
                     <button class="btn primary" on:click=save disabled=move || saving.get()>"Save changes"</button>
@@ -1059,8 +1059,8 @@ fn SaveQueryDialog(tab: Option<String>, query: Option<SavedQueryView>) -> impl I
                         <label><input type="checkbox" id="sq-everywhere" prop:checked=move || everywhere.get()
                             on:change=move |ev| everywhere.set(event_target_checked(&ev)) />" Show on every connection"</label>
                     </div>
-                    {move || error.get().map(|e| view! { <div class="note danger" role="alert">{e}</div> })}
                 </div>
+                {move || error.get().map(|e| view! { <div class="note danger dialog-alert" role="alert">{e}</div> })}
                 <footer>
                     {delete}
                     <button type="button" class="btn" on:click=move |_| close()>"Cancel"</button>
@@ -1306,8 +1306,8 @@ fn SettingsDialog() -> impl IntoView {
                         <span><button class="btn small walkthrough" on:click=walkthrough>"Show the walkthrough again"</button></span>
                     </div>
                     <p class="detail">"History stays on this computer, encrypted, and production connections keep none. The version check asks GitHub which release is the latest; it carries nothing about your databases."</p>
-                    {move || error.get().map(|e| view! { <div class="note danger" role="alert">{e}</div> })}
                 </div>
+                {move || error.get().map(|e| view! { <div class="note danger dialog-alert" role="alert">{e}</div> })}
                 <footer>
                     <button class="btn" on:click=move |_| close()>"Cancel"</button>
                     <button class="btn primary" on:click=save>"Save"</button>

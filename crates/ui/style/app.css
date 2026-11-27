@@ -85,7 +85,17 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .list { overflow: auto; flex: 1; min-height: 0; padding-bottom: 8px; }
 .item { display: flex; align-items: center; gap: 6px; height: var(--row); padding: 0 12px; cursor: default; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 0; background: none; width: 100%; text-align: start; }
 .item:hover { background: var(--raised); }
-.item.active { background: var(--select); }
+.item.active { background: var(--select); box-shadow: inset 3px 0 0 var(--green); font-weight: 600; }
+/* A connection's state: filled when open, ringed while opening, red when it failed. */
+.link { flex: none; width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--rule-strong); }
+.link-open { background: var(--green); border-color: var(--green); }
+.link-opening { border: 2px solid var(--amber); }
+.link-failed { background: var(--red); border-color: var(--red); }
+.item .name { overflow: hidden; text-overflow: ellipsis; }
+.conn-state { padding-inline-start: 26px; font-size: 12px; }
+.conn-state .btn { margin-inline-start: auto; }
+.conn-state.failed { color: var(--red); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .item .env { margin-inline-start: auto; font: 500 10px/1.6 var(--mono); padding: 0 5px; border-radius: 3px; text-transform: uppercase; }
 .env-production { background: var(--red-soft); color: var(--red); }
 .env-staging { background: var(--amber-soft); color: var(--amber); }
@@ -121,6 +131,12 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .badge.ro { border-color: var(--green); color: var(--green-ink); }
 .badge.rw { border-color: var(--amber); color: var(--amber); }
 .production-strip { box-shadow: inset 0 3px 0 var(--red); }
+/* Under the toolbar while the connection is not open. */
+.conn-banner { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--rule); background: var(--amber-soft); color: var(--amber); }
+.conn-banner.failed { align-items: flex-start; background: var(--red-soft); color: var(--red); }
+.conn-banner .what { min-width: 0; }
+.conn-banner .why { margin-top: 2px; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 8.5em; overflow: auto; }
+.conn-banner .push { margin-inline-start: auto; display: flex; gap: 6px; flex: none; }
 
 /* Editor: a transparent textarea over highlighted text */
 .editor { position: relative; border-bottom: 1px solid var(--rule); background: var(--raised); min-height: 0; overflow: auto; }
@@ -219,7 +235,11 @@ details.more > summary { cursor: default; color: var(--muted); font-weight: 500;
 
 /* Dialogs */
 .backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 35%); display: grid; place-items: center; z-index: 10; }
-.dialog { width: min(560px, calc(100vw - 40px)); max-height: calc(100vh - 60px); overflow: auto; background: var(--raised); border: 1px solid var(--rule-strong); border-radius: 6px; }
+/* The title and the buttons stay in view; what is between them scrolls. */
+.dialog { width: min(560px, calc(100vw - 40px)); max-height: calc(100vh - 40px); display: flex; flex-direction: column; overflow: hidden; background: var(--raised); border: 1px solid var(--rule-strong); border-radius: 6px; }
+.dialog > * { flex: none; }
+.dialog > .body { flex: 0 1 auto; min-height: 0; overflow: auto; }
+.dialog > .dialog-alert { margin: 0 16px 10px; max-height: 30vh; overflow: auto; white-space: pre-wrap; }
 .dialog.wide { width: min(820px, calc(100vw - 40px)); }
 .dialog header { padding: 12px 16px; border-bottom: 1px solid var(--rule); font-weight: 600; }
 .dialog .body { padding: 14px 16px; display: grid; gap: 10px; }

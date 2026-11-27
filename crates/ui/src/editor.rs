@@ -961,10 +961,6 @@ pub fn Workspace() -> impl IntoView {
                         }}</span> }.into_any()
                     })}
                     <span class="spacer"></span>
-                    {move || {
-                        let connecting = state.connecting.get().is_some() && state.connecting.get() == state.active.get();
-                        connecting.then(|| view! { <span class="detail">"Connecting…"</span> })
-                    }}
                     <label class="detail"><input type="checkbox" prop:checked=move || limit.get()
                         on:change=move |ev| limit.set(event_target_checked(&ev)) />" Limit"</label>
                     {move || live().filter(|_| config().is_some_and(|c| c.read_only || c.environment == Environment::Production)).map(|l| view! {
@@ -979,10 +975,13 @@ pub fn Workspace() -> impl IntoView {
                     <button class="btn small" on:click=cancel
                         disabled=move || output().is_none_or(|o| o.results.with(Vec::is_empty))>"Cancel"</button>
                     <button class="btn small run-all" on:click=move |_| run_everything()
-                        disabled=move || live().is_none() title="Shift+Ctrl+Enter">"Run all"</button>
+                        disabled=move || live().is_none()
+                        title=move || if live().is_some() { "Shift+Ctrl+Enter" } else { "Connect first" }>"Run all"</button>
                     <button class="btn small primary" on:click=move |_| run_current()
-                        disabled=move || live().is_none() title="Ctrl+Enter">"Run"</button>
+                        disabled=move || live().is_none()
+                        title=move || if live().is_some() { "Ctrl+Enter" } else { "Connect first" }>"Run"</button>
                 </div>
+                <ConnectionBanner />
                 <Show when=move || state.hints.get()>
                     <div class="hint" role="note">
                         <span>{move || HINTS[hint.get()]}</span>
@@ -1116,6 +1115,64 @@ pub fn Workspace() -> impl IntoView {
                 />
             </div>
         </main>
+    }
+}
+
+/// Under the toolbar while the active connection is not open: that it is opening, or why it
+/// could not be opened and what to do about it.
+#[component]
+fn ConnectionBanner() -> impl IntoView {
+    let state = ui();
+    move || {
+        let id = state.active.get()?;
+        if state.live.with(|m| m.contains_key(&id)) {
+            return None;
+        }
+        let config = state.active_config()?;
+        let name = config.name.clone();
+        let retry = id.clone();
+        if state.connecting.with(|c| c.contains(&id)) {
+            let through = config
+                .ssh
+                .as_ref()
+                .map(|s| format!(" through {}", s.target.host))
+                .unwrap_or_default();
+            return Some(
+                view! {
+                    <div class="conn-banner" role="status">{format!("Connecting to {name}{through}…")}</div>
+                }
+                .into_any(),
+            );
+        }
+        let edit = move |_| {
+            state
+                .dialog
+                .set(Dialog::Connection(Box::new(config.clone())))
+        };
+        Some(match state.failed.with(|m| m.get(&id).cloned()) {
+            Some(error) => view! {
+                <div class="conn-banner failed" role="alert">
+                    <div class="what">
+                        <strong>{format!("Could not connect to {name}.")}</strong>
+                        <div class="why">{error}</div>
+                    </div>
+                    <span class="push">
+                        <button class="btn small" on:click=edit>"Edit connection"</button>
+                        <button class="btn small primary retry" on:click=move |_| crate::sidebar::connect(retry.clone())>"Try again"</button>
+                    </span>
+                </div>
+            }
+            .into_any(),
+            None => view! {
+                <div class="conn-banner" role="status">
+                    <span>{format!("{name} is not connected.")}</span>
+                    <span class="push">
+                        <button class="btn small primary" on:click=move |_| crate::sidebar::connect(retry.clone())>"Connect"</button>
+                    </span>
+                </div>
+            }
+            .into_any(),
+        })
     }
 }
 

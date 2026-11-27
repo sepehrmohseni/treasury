@@ -459,6 +459,20 @@ mod desktop {
         );
         s.keys(&s.wait("#cf-ssh-secret", 10), "tunnel-password");
         shot("18-ssh");
+        // On a screen shorter than the form, the form scrolls between its title and its
+        // buttons, so the buttons stay in view.
+        s.script("document.querySelector('.dialog').style.maxHeight = '320px'");
+        assert_eq!(
+            s.script(
+                "const d = document.querySelector('.dialog').getBoundingClientRect(); \
+                 const b = document.querySelector('.dialog button[type=submit]').getBoundingClientRect(); \
+                 const body = document.querySelector('.dialog .body'); \
+                 return [b.top >= d.top && b.bottom <= d.bottom && d.bottom <= window.innerHeight, \
+                         body.scrollHeight > body.clientHeight]"
+            ),
+            serde_json::json!([true, true])
+        );
+        s.script("document.querySelector('.dialog').style.maxHeight = ''");
         s.click_css(".dialog button[type=submit]");
         s.wait_text(".dialog", "Unknown SSH host", 30);
         s.click_css(".dialog .btn.primary");
@@ -466,6 +480,45 @@ mod desktop {
         s.wait_text(".statusbar", "PostgreSQL", 60);
         run(&s, "SELECT inet_server_addr() AS server");
         s.wait_text(&shown(".result-foot"), "1 row", 30);
+
+        // The open connection is marked in the list, and its tree is under it.
+        let active = s.wait_text(".list .item.active", "via-ssh", 10);
+        assert!(active.contains("Connected"), "{active}");
+        s.wait(".list .item.active .link-open", 10);
+
+        // A connection that cannot be opened says why, where the work is, with what to do next.
+        s.click_css(".side-actions .btn.primary");
+        s.keys(
+            &s.wait("#cf-uri", 10),
+            &format!("postgres://postgres:{PASSWORD}@127.0.0.1:1/treasury?sslmode=disable"),
+        );
+        let name = s.wait("#cf-name", 10);
+        s.click(&name);
+        s.keys(&name, "nowhere");
+        s.click_css(".dialog button[type=submit]");
+        let banner = s.wait_text(".conn-banner.failed", "Could not connect to nowhere.", 60);
+        assert!(banner.contains("127.0.0.1:1"), "{banner}");
+        s.wait_text(".list .conn-state.failed", "Could not connect", 10);
+        s.wait(".list .item.active .link-failed", 10);
+        assert_eq!(
+            s.script("return document.querySelector('.toolbar .btn.primary').disabled"),
+            serde_json::json!(true)
+        );
+        shot("19-failed");
+        // Trying again tries again, and fails the same way.
+        s.click_css(".conn-banner .retry");
+        s.wait_text(".conn-banner.failed", "Could not connect to nowhere.", 60);
+        // "Edit connection" opens its form; deleting it there takes it off the list.
+        s.click_css(".conn-banner .btn:not(.primary)");
+        s.wait_text(".dialog header", "Edit connection", 10);
+        s.click_css(".dialog .delete-connection");
+        s.click_css(".dialog .confirm-delete");
+        s.wait_script(
+            "return ![...document.querySelectorAll('.list > .item')].some(e => e.innerText.includes('nowhere'))",
+            10,
+        );
+        // With connections saved, the first screen says where to start.
+        s.wait_text(".home h1", "Open a connection", 10);
 
         // Deleting a connection asks first.
         s.double_click(&s.wait_item(".list > .item", "via-ssh", 10));
@@ -625,7 +678,8 @@ mod desktop {
         drop(s);
         assert!(saved_connection(&data), "the connection was not saved");
         let s = driver.session(&app);
-        s.wait_text(".home h1", "Connect to a database", 60);
+        // Connections are saved, so the first screen points at the list.
+        s.wait_text(".home h1", "Open a connection", 60);
         assert!(
             !s.page_text().contains("kept only until Treasury quits"),
             "the app found no keychain"

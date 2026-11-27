@@ -1,7 +1,7 @@
 //! The interface's state, shared by every component.
 
 use leptos::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use treasury_core::config::{ConnectionConfig, ConnectionId};
 use treasury_core::exec::ExecutionStatus;
 use treasury_core::schema::ObjectPath;
@@ -134,7 +134,10 @@ pub struct Ui {
     pub connections: RwSignal<Vec<ConnectionView>>,
     pub active: RwSignal<Option<ConnectionId>>,
     pub live: RwSignal<HashMap<ConnectionId, LiveView>>,
-    pub connecting: RwSignal<Option<ConnectionId>>,
+    /// Connections being opened.
+    pub connecting: RwSignal<HashSet<ConnectionId>>,
+    /// Why each connection that could not be opened failed, until it is tried again.
+    pub failed: RwSignal<HashMap<ConnectionId, String>>,
     pub dialog: RwSignal<Dialog>,
     /// A message for the user that is not tied to a result.
     pub notice: RwSignal<Option<String>>,
@@ -195,7 +198,8 @@ impl Ui {
             connections: RwSignal::new(Vec::new()),
             active: RwSignal::new(None),
             live: RwSignal::new(HashMap::new()),
-            connecting: RwSignal::new(None),
+            connecting: RwSignal::new(HashSet::new()),
+            failed: RwSignal::new(HashMap::new()),
             dialog: RwSignal::new(Dialog::None),
             notice: RwSignal::new(None),
             hints: RwSignal::new(true),

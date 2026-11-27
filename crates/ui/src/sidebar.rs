@@ -58,27 +58,76 @@ pub fn import_connections() {
     });
 }
 
-/// Opens connection `id` and makes it the active one.
+/// Makes connection `id` the active one, and opens it unless it is open or opening.
 pub fn open(id: ConnectionId) {
     let state = ui();
     state.active.set(Some(id.clone()));
-    if state.live.with(|m| m.contains_key(&id)) {
+    if state.live.with(|m| m.contains_key(&id)) || state.connecting.with(|c| c.contains(&id)) {
         return;
     }
-    state.connecting.set(Some(id.clone()));
+    connect(id);
+}
+
+/// Opens connection `id`. Why it failed, when it does, is kept for the sidebar and the
+/// workspace to show until the next try.
+pub fn connect(id: ConnectionId) {
+    let state = ui();
+    state.failed.update(|m| {
+        m.remove(&id);
+    });
+    state.connecting.update(|c| {
+        c.insert(id.clone());
+    });
     leptos::task::spawn_local(async move {
         let result = ipc::call::<_, LiveView>("connect", &serde_json::json!({ "id": id })).await;
-        state.connecting.set(None);
+        state.connecting.update(|c| {
+            c.remove(&id);
+        });
         match result {
             Ok(l) => {
                 state.live.update(|m| {
                     m.insert(id, l);
                 });
-                state.notice.set(None);
             }
-            Err(e) => state.notice.set(Some(e.to_string())),
+            Err(e) => state.failed.update(|m| {
+                m.insert(id, e.to_string());
+            }),
         }
     });
+}
+
+/// How a connection stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Link {
+    Open,
+    Opening,
+    Failed,
+    Closed,
+}
+
+fn link_of(id: &ConnectionId) -> Link {
+    let state = ui();
+    if state.live.with(|m| m.contains_key(id)) {
+        Link::Open
+    } else if state.connecting.with(|c| c.contains(id)) {
+        Link::Opening
+    } else if state.failed.with(|m| m.contains_key(id)) {
+        Link::Failed
+    } else {
+        Link::Closed
+    }
+}
+
+impl Link {
+    /// The marker's class and what it says.
+    fn marker(self) -> (&'static str, &'static str) {
+        match self {
+            Link::Open => ("link link-open", "Connected"),
+            Link::Opening => ("link link-opening", "Connecting"),
+            Link::Failed => ("link link-failed", "Could not connect"),
+            Link::Closed => ("link", "Not connected"),
+        }
+    }
 }
 
 #[component]
@@ -118,27 +167,63 @@ pub fn Sidebar() -> impl IntoView {
                     key=|c| c.config.id.clone()
                     children=move |c| {
                         let id = c.config.id.clone();
-                        let id_active = id.clone();
-                        let id_tree = id.clone();
+                        let id_view = id.clone();
                         let edit = c.config.clone();
+                        let active = Memo::new({
+                            let id = id.clone();
+                            move |_| state.active.get().as_ref() == Some(&id)
+                        });
+                        // Changes only when this connection's state does, so its open tree is
+                        // kept while others connect.
+                        let link = Memo::new({
+                            let id = id.clone();
+                            move |_| link_of(&id)
+                        });
                         view! {
                             <button
-                                class="item"
-                                class:active=move || state.active.get().as_ref() == Some(&id_active)
+                                class="item connection"
+                                class:active=move || active.get()
+                                aria-current=move || active.get().then_some("true")
                                 on:click=move |_| open(id.clone())
                                 on:dblclick=move |_| state.dialog.set(Dialog::Connection(Box::new(edit.clone())))
                                 title="Open; double-click to edit"
                             >
-                                <span>{c.config.name.clone()}</span>
+                                {move || {
+                                    let (class, label) = link.get().marker();
+                                    view! { <span class=class title=label><span class="visually-hidden">{label}</span></span> }
+                                }}
+                                <span class="name">{c.config.name.clone()}</span>
                                 <span class=env_class(c.config.environment)>{env_label(c.config.environment)}</span>
                             </button>
-                            <Show when=move || {
-                                state.active.get().as_ref() == Some(&id_tree)
-                                    && state.live.with(|m| m.contains_key(&id_tree))
-                            }>
-                                <div class="tree" role="tree">
-                                    <TreeLevel connection=c.config.id.clone() path=ObjectPath::root() depth=0 />
-                                </div>
+                            <Show when=move || active.get()>
+                                {
+                                    let id = id_view.clone();
+                                    move || {
+                                        let retry = id.clone();
+                                        match link.get() {
+                                            Link::Open => view! {
+                                                <div class="tree" role="tree">
+                                                    <TreeLevel connection=id.clone() path=ObjectPath::root() depth=0 />
+                                                </div>
+                                            }.into_any(),
+                                            Link::Opening => view! {
+                                                <div class="item detail conn-state">"Connecting…"</div>
+                                            }.into_any(),
+                                            Link::Failed => view! {
+                                                <div class="item conn-state failed">
+                                                    <span>"Could not connect"</span>
+                                                    <button class="btn small retry" on:click=move |_| connect(retry.clone())>"Try again"</button>
+                                                </div>
+                                            }.into_any(),
+                                            Link::Closed => view! {
+                                                <div class="item conn-state">
+                                                    <span class="detail">"Not connected"</span>
+                                                    <button class="btn small" on:click=move |_| connect(retry.clone())>"Connect"</button>
+                                                </div>
+                                            }.into_any(),
+                                        }
+                                    }
+                                }
                             </Show>
                         }
                     }

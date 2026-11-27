@@ -31,8 +31,13 @@ pub fn Home() -> impl IntoView {
     view! {
         <main class="home-pane">
             <div class="home">
-                <h1>"Connect to a database"</h1>
-                <p>"Treasury opens PostgreSQL, MySQL, MariaDB, SQL Server and MongoDB. Passwords go to your system keychain, never to a settings file."</p>
+                <Show when=move || state.connections.with(Vec::is_empty) fallback=|| view! {
+                    <h1>"Open a connection"</h1>
+                    <p>"Click a connection on the left. Its databases, schemas and tables open under it, and the editor opens here: write a statement and press Run, or Ctrl+Enter. Double-click a table to see its rows."</p>
+                }>
+                    <h1>"Connect to a database"</h1>
+                </Show>
+                <p>"Treasury opens PostgreSQL, MySQL, MariaDB, SQL Server, MongoDB, Redis and Valkey. Passwords go to your system keychain, never to a settings file."</p>
                 <div class="actions">
                     <button class="btn primary" on:click=move |_| add_connection()>"Add connection"</button>
                     <button class="btn" on:click=move |_| import_connections()>"Import connections"</button>
