@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 mod app;
+mod complete;
 mod dialogs;
 mod editor;
 mod grid;

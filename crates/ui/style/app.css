@@ -128,6 +128,12 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .editor pre { pointer-events: none; min-height: 100%; }
 .editor textarea { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; border: 0; background: transparent; color: transparent; caret-color: var(--ink); outline: none; overflow: hidden; }
 .editor textarea::selection { background: var(--select); color: transparent; }
+/* Laid out like the editor's text, to find where the caret is; never seen. */
+.caret-probe { position: absolute; top: 0; left: 0; right: 0; visibility: hidden; pointer-events: none; padding: 10px 12px; font: 13px/20px var(--mono); white-space: pre-wrap; word-break: break-word; tab-size: 4; }
+.completions { position: absolute; z-index: 5; margin: 0; padding: 2px 0; list-style: none; min-width: 240px; max-width: 440px; max-height: 220px; overflow: auto; background: var(--raised); border: 1px solid var(--rule-strong); border-radius: 4px; font: 12px/22px var(--mono); }
+.completions li { display: flex; gap: 14px; padding: 0 8px; white-space: nowrap; cursor: default; }
+.completions li.on { background: var(--select); }
+.completions .c-detail { margin-inline-start: auto; color: var(--faint); font: 11px/22px var(--ui); overflow: hidden; text-overflow: ellipsis; }
 .tk-keyword { color: var(--green-ink); font-weight: 500; }
 .tk-string { color: var(--amber); }
 .tk-number { color: #3f3d7f; }

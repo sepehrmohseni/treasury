@@ -4,9 +4,10 @@ use leptos::prelude::*;
 use std::collections::HashMap;
 use treasury_core::config::{ConnectionConfig, ConnectionId};
 use treasury_core::exec::ExecutionStatus;
+use treasury_core::schema::ObjectPath;
 use treasury_ipc::{
-    AppFacts, ConnectionView, HostKeyQuestion, ImportPreview, LiveView, Prepared, RowEdits,
-    SavedQueryView, UpdateView,
+    AppFacts, CatalogView, ColumnView, ConnectionView, HostKeyQuestion, ImportPreview, LiveView,
+    Prepared, RowEdits, SavedQueryView, UpdateView,
 };
 
 /// A dialog over the window; one at a time.
@@ -151,6 +152,10 @@ pub struct Ui {
     pub history_rev: RwSignal<u64>,
     /// Scripts running, by tab.
     pub scripts: RwSignal<HashMap<String, Script>>,
+    /// Each connection's tables, views and collections, once read.
+    pub catalogs: RwSignal<HashMap<ConnectionId, CatalogView>>,
+    /// Columns of tables, by connection and table, once read.
+    pub table_columns: RwSignal<HashMap<(ConnectionId, ObjectPath), Vec<ColumnView>>>,
     /// Asks the workspace to run a statement the confirm dialog approved.
     pub approved: RwSignal<Option<Approved>>,
     /// The result whose edits the review dialog just saved, so it reads its rows again.
@@ -195,6 +200,8 @@ impl Ui {
             side_view: RwSignal::new(SideView::Connections),
             history_rev: RwSignal::new(0),
             scripts: RwSignal::new(HashMap::new()),
+            catalogs: RwSignal::new(HashMap::new()),
+            table_columns: RwSignal::new(HashMap::new()),
             approved: RwSignal::new(None),
             saved: RwSignal::new(None),
             update: RwSignal::new(None),
@@ -206,6 +213,16 @@ impl Ui {
     pub fn active_config(&self) -> Option<ConnectionConfig> {
         let id = self.active.get()?;
         self.connections.with(|list| {
+            list.iter()
+                .find(|c| c.config.id == id)
+                .map(|c| c.config.clone())
+        })
+    }
+
+    /// [`Ui::active_config`], without subscribing to changes.
+    pub fn active_config_untracked(&self) -> Option<ConnectionConfig> {
+        let id = self.active.get_untracked()?;
+        self.connections.with_untracked(|list| {
             list.iter()
                 .find(|c| c.config.id == id)
                 .map(|c| c.config.clone())

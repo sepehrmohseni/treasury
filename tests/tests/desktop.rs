@@ -297,6 +297,19 @@ mod desktop {
         assert!(bar.contains("no_such_table"), "{bar}");
         let tabs = s.text(&s.wait(&shown(".result-tabs"), 10));
         assert!(!tabs.contains("3") && !tabs.contains("2 ·"), "{tabs}");
+
+        // Completion: a table after FROM, then a column of the table the statement names.
+        s.clear(&editor);
+        s.keys(&editor, "SELECT * FROM smo");
+        s.wait_text(".completions", "smoke", 30);
+        shot("13-complete");
+        s.keys(&editor, &key::ENTER.to_string());
+        s.wait_text(".editor pre", "SELECT * FROM smoke", 10);
+        s.keys(&editor, " WHERE na");
+        s.wait_text(".completions", "name", 30);
+        s.keys(&editor, &key::ENTER.to_string());
+        s.wait_text(".editor pre", "SELECT * FROM smoke WHERE name", 10);
+        assert!(s.find(".completions").is_none());
         s.click_css(".side-views .view-connections");
 
         // A production connection opens read-only, refuses writes until they are unlocked, and
@@ -320,10 +333,10 @@ mod desktop {
         s.click_css(".dialog button[type=submit]");
         s.wait_text(".toolbar .title", "smoke-prod", 30);
         s.wait(".toolbar .badge.ro", 30);
-        shot("13-production");
+        shot("14-production");
         run(&s, "DELETE FROM smoke");
         s.wait_text(".dialog", "Unlock writes to run it", 30);
-        shot("14-refused");
+        shot("15-refused");
         s.click_css(".dialog .btn.primary");
         s.wait_text(".statusbar", "Writes unlocked for 15 minutes", 30);
         run(&s, "DELETE FROM smoke");
@@ -334,7 +347,7 @@ mod desktop {
             "return document.querySelector('.dialog .btn.primary').disabled === false",
             10,
         );
-        shot("15-type-the-name");
+        shot("16-type-the-name");
         s.click_css(".dialog .btn.primary");
         s.wait_text(&shown(".grid .message"), "1 row changed", 30);
 
@@ -366,10 +379,10 @@ mod desktop {
             10,
         );
         s.wait_text(&shown(".result-tabs"), "1 row changed", 10);
-        shot("16-dark");
+        shot("17-dark");
         s.click_css(".brand .settings");
         s.wait("#st-theme", 10);
-        shot("17-settings");
+        shot("18-settings");
         s.click_css(".dialog .walkthrough");
         s.wait_text(".tour", "Your first five minutes", 10);
 

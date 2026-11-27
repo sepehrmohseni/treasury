@@ -3,13 +3,14 @@
 //! The editor is a transparent textarea over highlighted text; the highlighting comes from
 //! Treasury's own SQL tokenizer, so it reads a statement the way the guardrails do.
 
+use crate::complete;
 use crate::grid::Results;
 use crate::home::set_setting;
 use crate::ipc;
 use crate::state::{Approved, Dialog, ui};
 use crate::tabs;
 use leptos::prelude::*;
-use treasury_core::analyze::Analyzer;
+use treasury_core::analyze::{Analyzer, StatementClass};
 use treasury_core::config::{ConnectionConfig, ConnectionId, Engine, Environment};
 use treasury_core::driver::SqlDialect;
 use treasury_core::exec::ExecutionStatus;
@@ -17,6 +18,7 @@ use treasury_core::schema::{ObjectKind, ObjectNode};
 use treasury_ipc::{LiveView, Prepared};
 use treasury_sql::highlight::{SpanKind, highlight};
 use treasury_sql::{SqlAnalyzer, render};
+use wasm_bindgen::JsCast;
 
 /// Short tips, one shown at a time.
 const HINTS: &[&str] = &[
@@ -32,6 +34,7 @@ const HINTS: &[&str] = &[
     "Ctrl+S saves the tab as a query; saved queries are under Queries on the left.",
     "History on the left lists what ran on this connection; search it, or click one to open it.",
     "Shift+Ctrl+Enter runs every statement in the tab, one after another, each with its own result.",
+    "Table and column names are suggested as you type; Ctrl+Space shows them without typing.",
 ];
 
 pub fn dialect_of(engine: Engine) -> Option<SqlDialect> {
@@ -197,6 +200,10 @@ fn begin(tab: String, statement: String, limit: bool, slot: Slot, step: Option<(
         match prepared {
             Err(e) => failed(&tab, Some(e.to_string())),
             Ok(p) if p.refused.is_none() && p.count.is_none() && p.name_required.is_none() => {
+                if p.class == StatementClass::Ddl {
+                    // Its tables may change; completion reads them again.
+                    crate::complete::fetch::forget(&connection);
+                }
                 run(tab, connection, statement, p.token, None, limit, slot).await;
             }
             Ok(p) => state.dialog.set(Dialog::Confirm {
@@ -472,6 +479,42 @@ fn replace_in_editor(el: &web_sys::HtmlTextAreaElement, start: u32, end: u32, te
         .unwrap_or(false)
 }
 
+/// The suggestions shown: where the word starts and the caret is (bytes), and where the list
+/// goes (pixels in the editor).
+#[derive(Clone, Debug, PartialEq)]
+struct Popup {
+    start: usize,
+    caret: usize,
+    items: Vec<complete::Suggestion>,
+    selected: usize,
+    x: f64,
+    y: f64,
+}
+
+thread_local! {
+    /// A suggestion is being written into the editor, so its input event opens no new list.
+    static ACCEPTING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Where the caret is in the editor, in pixels: the probe, laid out like the editor's text,
+/// holds the text before the caret and a mark where it ends.
+fn caret_point(probe: &web_sys::HtmlDivElement, before: &str) -> (f64, f64) {
+    use wasm_bindgen::JsCast;
+    probe.set_text_content(Some(before));
+    let Ok(mark) = document().create_element("span") else {
+        return (0.0, 0.0);
+    };
+    mark.set_text_content(Some("\u{200b}"));
+    let _ = probe.append_child(&mark);
+    let point = mark
+        .dyn_ref::<web_sys::HtmlElement>()
+        .map_or((0.0, 0.0), |m| {
+            (f64::from(m.offset_left()), f64::from(m.offset_top()))
+        });
+    probe.set_text_content(None);
+    point
+}
+
 /// The DOM's offset of the caret in `el`.
 fn caret(el: &web_sys::HtmlTextAreaElement) -> u32 {
     el.selection_start().ok().flatten().unwrap_or(0)
@@ -681,6 +724,90 @@ pub fn Workspace() -> impl IntoView {
         }
     };
 
+    // Completion: the suggestions for the word being typed, under the caret.
+    let popup = RwSignal::new(None::<Popup>);
+    let probe = NodeRef::<leptos::html::Div>::new();
+    // A word is being typed, so names arriving from the app refresh the list.
+    let completing = RwSignal::new(false);
+    let update_completion = move || {
+        let (Some(connection), Some(d), Some(el)) = (
+            state.active.get_untracked(),
+            state
+                .active_config_untracked()
+                .and_then(|c| dialect_of(c.engine)),
+            area.get_untracked(),
+        ) else {
+            popup.set(None);
+            return;
+        };
+        let value = el.value();
+        let at = byte_offset(&value, caret(&el));
+        let Some(ctx) = complete::context(d, &value, at) else {
+            popup.set(None);
+            return;
+        };
+        complete::fetch::catalog(&connection);
+        let catalog = state
+            .catalogs
+            .with_untracked(|m| m.get(&connection).map(|c| c.entries.clone()))
+            .unwrap_or_default();
+        let statement = statement_at(Some(d), &value, at, at);
+        for t in complete::tables_named(d, &statement, &catalog) {
+            complete::fetch::columns(&connection, t);
+        }
+        let items = state.table_columns.with_untracked(|cols| {
+            complete::suggest(d, &ctx, &statement, &catalog, &|e| {
+                cols.get(&(connection.clone(), e.path.clone())).cloned()
+            })
+        });
+        let Some(probe) = probe.get_untracked().filter(|_| !items.is_empty()) else {
+            popup.set(None);
+            return;
+        };
+        let (x, y) = caret_point(&probe, value.get(..at).unwrap_or(""));
+        popup.set(Some(Popup {
+            start: ctx.start,
+            caret: at,
+            items,
+            selected: 0,
+            x,
+            y,
+        }));
+    };
+    // Names arriving from the app refresh the list while a word is being typed.
+    Effect::new(move |_| {
+        state.catalogs.track();
+        state.table_columns.track();
+        if completing.get_untracked() {
+            update_completion();
+        }
+    });
+    let close_completion = move || {
+        completing.set(false);
+        popup.set(None);
+    };
+    let accept = move |i: usize| {
+        let (Some(p), Some(el)) = (popup.get_untracked(), area.get_untracked()) else {
+            return;
+        };
+        let Some(s) = p.items.get(i) else {
+            return;
+        };
+        close_completion();
+        let value = el.value();
+        let units = |b: usize| {
+            u32::try_from(value.get(..b).unwrap_or("").encode_utf16().count()).unwrap_or(0)
+        };
+        ACCEPTING.with(|a| a.set(true));
+        let done = replace_in_editor(&el, units(p.start), units(p.caret), &s.insert);
+        ACCEPTING.with(|a| a.set(false));
+        if !done && let Some(id) = state.current_untracked() {
+            let mut text = value.clone();
+            text.replace_range(p.start..p.caret, &s.insert);
+            tabs::set_text(&id, text);
+        }
+    };
+
     view! {
         <main
             class="workspace"
@@ -739,6 +866,19 @@ pub fn Workspace() -> impl IntoView {
             </div>
             <div class="editor">
                 <pre aria-hidden="true">{move || highlighted(dialect(), &text())}</pre>
+                <div class="caret-probe" node_ref=probe aria-hidden="true"></div>
+                {move || popup.get().map(|p| view! {
+                    <ul class="completions" role="listbox" aria-label="Suggestions"
+                        style:left=format!("{}px", p.x) style:top=format!("{}px", p.y + 20.0)>
+                        {p.items.into_iter().enumerate().map(|(i, s)| view! {
+                            <li role="option" class:on=i == p.selected aria-selected=(i == p.selected).to_string()
+                                on:mousedown=move |ev| { ev.prevent_default(); accept(i); }>
+                                <span class="c-label">{s.label}</span>
+                                <span class="c-detail">{s.detail}</span>
+                            </li>
+                        }).collect_view()}
+                    </ul>
+                })}
                 <textarea
                     node_ref=area
                     spellcheck="false"
@@ -750,13 +890,60 @@ pub fn Workspace() -> impl IntoView {
                             tabs::set_text(&id, event_target_value(&ev));
                         }
                         track_caret();
+                        // A letter or a dot (re)opens the suggestions; deleting refines them.
+                        let typed = ev.dyn_ref::<web_sys::InputEvent>().and_then(web_sys::InputEvent::data);
+                        let wordy = typed.as_deref().and_then(|t| t.chars().last()).is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.');
+                        let deleting = ev.dyn_ref::<web_sys::InputEvent>().is_some_and(|e| e.input_type().starts_with("delete"));
+                        if ACCEPTING.with(std::cell::Cell::get) {
+                        } else if wordy || (deleting && completing.get_untracked()) {
+                            completing.set(true);
+                            update_completion();
+                        } else {
+                            close_completion();
+                        }
                     }
                     on:keyup=move |_| track_caret()
-                    on:click=move |_| track_caret()
-                    on:blur=move |_| if let Some(id) = state.current() { tabs::keep(&id) }
+                    on:click=move |_| { track_caret(); close_completion(); }
+                    on:blur=move |_| {
+                        close_completion();
+                        if let Some(id) = state.current() { tabs::keep(&id) }
+                    }
                     on:keydown=move |ev: web_sys::KeyboardEvent| {
                         let ctrl = ev.ctrl_key() || ev.meta_key();
-                        if ctrl && ev.shift_key() && ev.key() == "Enter" {
+                        // The open list takes the arrows, Enter, Tab and Escape.
+                        if let Some(p) = popup.get_untracked().filter(|_| !ctrl) {
+                            let n = p.items.len();
+                            match ev.key().as_str() {
+                                "ArrowDown" | "ArrowUp" => {
+                                    ev.prevent_default();
+                                    let next = if ev.key() == "ArrowDown" { (p.selected + 1) % n } else { (p.selected + n - 1) % n };
+                                    popup.update(|p| if let Some(p) = p { p.selected = next; });
+                                    request_animation_frame(|| {
+                                        if let Some(el) = document().query_selector(".completions li.on").ok().flatten() {
+                                            el.scroll_into_view_with_bool(false);
+                                        }
+                                    });
+                                    return;
+                                }
+                                "Enter" | "Tab" => {
+                                    ev.prevent_default();
+                                    accept(p.selected);
+                                    return;
+                                }
+                                "Escape" => {
+                                    ev.prevent_default();
+                                    close_completion();
+                                    return;
+                                }
+                                _ => {}
+                            }
+                        }
+                        if ctrl && ev.key() == " " {
+                            // Ctrl+Space asks for suggestions without typing.
+                            ev.prevent_default();
+                            completing.set(true);
+                            update_completion();
+                        } else if ctrl && ev.shift_key() && ev.key() == "Enter" {
                             ev.prevent_default();
                             run_everything();
                         } else if ctrl && ev.key() == "Enter" {
