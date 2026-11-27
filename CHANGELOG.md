@@ -3,6 +3,18 @@
 Notable changes to Treasury, grouped as Added, Changed and Fixed. Versions follow Semantic
 Versioning.
 
+## 0.1.2 (2026-11-27)
+
+### Added
+
+- redis: Show and change a key's expiry beside its rows
+- site: Download cards per platform and a list of every version
+- site: Offer the download for the visitor's system, latest version only
+
+### Fixed
+
+- ui: Fit the window to the screen and show why a connection failed
+
 ## 0.1.1 (2026-11-27)
 
 ### Added
