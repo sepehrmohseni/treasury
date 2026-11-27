@@ -173,7 +173,9 @@ mod docker {
         fn types(&self) -> TypeCases {
             TypeCases {
                 setup: vec![
-                    r#"{"drop": "types"}"#.into(),
+                    // Emptied rather than dropped: MongoDB before 7.0 refuses to drop a
+                    // collection that does not exist yet.
+                    r#"{"delete": "types", "deletes": [{"q": {}, "limit": 0}]}"#.into(),
                     r#"{"insert": "types", "documents": [{"_id": 1, "b": true, "i": {"$numberInt": "-4"},
                        "l": {"$numberLong": "-8"}, "d": 2.25, "s": "héllo",
                        "oid": {"$oid": "65f0c0ffee0000000000abcd"},
