@@ -66,6 +66,19 @@ fn type_name(t: &str) -> &str {
 
 impl RedisSession {
     async fn databases(&self, query: &ChildQuery) -> Result<ChildPage> {
+        if self.cluster() {
+            // A cluster has database 0 only.
+            return Ok(ChildPage {
+                nodes: vec![ObjectNode {
+                    path: ObjectPath::root().child(ObjectKind::Database, "0"),
+                    kind: ObjectKind::Database,
+                    name: "db0".into(),
+                    expandable: true,
+                    detail: None,
+                }],
+                next_cursor: None,
+            });
+        }
         let mut conn = self.conn().await;
         let info: String = self
             .meta(&mut conn, redis::cmd("INFO").arg("keyspace"))
@@ -128,32 +141,54 @@ impl RedisSession {
             Some(f) => format!("*{}*", glob(f)),
             None => format!("{}*", glob(prefix)),
         };
+        // A cluster's keys are spread over its primaries; each is scanned in turn.
+        let nodes: Vec<Option<(String, u16)>> = if self.cluster() {
+            let slots: redis::Value = self
+                .meta(&mut conn, &redis::cmd("CLUSTER").arg("SLOTS").to_owned())
+                .await?;
+            crate::conn::primaries(&slots)
+                .into_iter()
+                .map(Some)
+                .collect()
+        } else {
+            vec![None]
+        };
         let mut found = Vec::new();
-        let mut cursor = "0".to_owned();
         let mut calls = 0;
         let mut partial = false;
-        loop {
-            let (next, keys): (String, Vec<String>) = self
-                .meta(
-                    &mut conn,
-                    redis::cmd("SCAN")
-                        .arg(&cursor)
-                        .arg("MATCH")
-                        .arg(&pattern)
-                        .arg("COUNT")
-                        .arg(1_000),
-                )
-                .await?;
-            found.extend(keys.into_iter().filter(|k| k.starts_with(prefix)));
-            calls += 1;
-            if next == "0" {
-                break;
+        'nodes: for node in nodes {
+            let mut cursor = "0".to_owned();
+            loop {
+                let mut cmd = redis::cmd("SCAN");
+                cmd.arg(&cursor)
+                    .arg("MATCH")
+                    .arg(&pattern)
+                    .arg("COUNT")
+                    .arg(1_000);
+                let reply: redis::Value = match &node {
+                    Some((host, port)) => {
+                        tokio::time::timeout(self.metadata_timeout, conn.on_node(cmd, host, *port))
+                            .await
+                            .map_err(|_| Error::timeout(self.metadata_timeout))?
+                            .map_err(|e| self.map(&e))?
+                    }
+                    None => self.meta(&mut conn, &cmd).await?,
+                };
+                let (next, keys): (String, Vec<String>) =
+                    redis::from_redis_value(reply).map_err(|e| {
+                        Error::new(ErrorKind::Protocol, format!("SCAN answered oddly: {e}"))
+                    })?;
+                found.extend(keys.into_iter().filter(|k| k.starts_with(prefix)));
+                calls += 1;
+                if next == "0" {
+                    break;
+                }
+                if found.len() >= SCAN_LIMIT || calls >= SCAN_CALLS {
+                    partial = true;
+                    break 'nodes;
+                }
+                cursor = next;
             }
-            if found.len() >= SCAN_LIMIT || calls >= SCAN_CALLS {
-                partial = true;
-                break;
-            }
-            cursor = next;
         }
         let level = level(found, prefix, &self.delimiter);
         let offset: usize = query
@@ -194,15 +229,29 @@ impl RedisSession {
             .filter_map(|n| n.path.leaf().map(|l| l.name.clone()))
             .collect();
         if !shown.is_empty() {
-            let mut pipe = redis::pipe();
-            for k in &shown {
-                pipe.cmd("TYPE").arg(k);
-            }
-            let types: Vec<String> =
-                tokio::time::timeout(self.metadata_timeout, pipe.query_async(&mut conn))
+            // One round trip on one server; on a cluster each key's node answers for it.
+            let types: Vec<String> = if self.cluster() {
+                let asks = shown.iter().map(|k| {
+                    let mut c = conn.clone();
+                    let cmd = redis::cmd("TYPE").arg(k).to_owned();
+                    async move { c.query::<String>(&cmd).await }
+                });
+                tokio::time::timeout(self.metadata_timeout, futures::future::join_all(asks))
                     .await
                     .map_err(|_| Error::timeout(self.metadata_timeout))?
-                    .map_err(|e| self.map(&e))?;
+                    .into_iter()
+                    .map(|r| r.unwrap_or_else(|_| "unknown".into()))
+                    .collect()
+            } else {
+                let mut pipe = redis::pipe();
+                for k in &shown {
+                    pipe.cmd("TYPE").arg(k);
+                }
+                tokio::time::timeout(self.metadata_timeout, conn.pipeline(&pipe))
+                    .await
+                    .map_err(|_| Error::timeout(self.metadata_timeout))?
+                    .map_err(|e| self.map(&e))?
+            };
             let mut types = types.into_iter();
             for n in nodes.iter_mut().filter(|n| n.kind == ObjectKind::Key) {
                 n.detail = types.next().map(|t| type_name(&t).to_owned());

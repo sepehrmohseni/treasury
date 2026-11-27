@@ -255,6 +255,95 @@ mod docker {
         );
     }
 
+    /// A cluster of one node holding every slot: commands go to it by key, and the key browser
+    /// scans the primaries.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn cluster_routes_by_key() {
+        let container = with_startup(
+            GenericImage::new("redis", "7.4.12-alpine")
+                .with_exposed_port(6379.tcp())
+                .with_wait_for(WaitFor::message_on_stdout("Ready to accept connections")),
+        )
+        .with_cmd([
+            "redis-server",
+            "--cluster-enabled",
+            "yes",
+            "--requirepass",
+            PASSWORD,
+            "--masterauth",
+            PASSWORD,
+        ])
+        .start()
+        .await
+        .expect("start the node");
+        let host = container.get_host().await.unwrap().to_string();
+        let port = container.get_host_port_ipv4(6379.tcp()).await.unwrap();
+        let inside = container.get_bridge_ip_address().await.unwrap();
+        let mut config = ConnectionConfig::new("cluster", Engine::Redis, &host).unwrap();
+        config.endpoint = Endpoint::Host { host, port };
+        config.user = Some("default".into());
+        config.tls.mode = TlsMode::Disable;
+        let secrets: Arc<dyn SecretSource> = Arc::new(MapSecrets::password(PASSWORD));
+        // The node gets every slot, and names itself by an address the tests reach.
+        let node = RedisDriver::redis()
+            .connect(&config, ctx(secrets.clone()))
+            .await
+            .unwrap();
+        run(
+            node.as_ref(),
+            &format!("CONFIG SET cluster-announce-ip {inside}"),
+        )
+        .await
+        .unwrap();
+        run(node.as_ref(), "CLUSTER ADDSLOTSRANGE 0 16383")
+            .await
+            .unwrap();
+        for _ in 0..60 {
+            let info = run(node.as_ref(), "CLUSTER INFO").await.unwrap();
+            if format!("{info:?}").contains("cluster_state:ok") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        config.options.insert("mode".into(), "cluster".into());
+        let s = RedisDriver::redis()
+            .connect(&config, ctx(secrets))
+            .await
+            .unwrap();
+        assert_eq!(
+            s.capabilities().cancel,
+            treasury_core::driver::CancelMethod::ClientOnly
+        );
+        for k in ["a", "b", "c", "user:1", "user:2"] {
+            run(s.as_ref(), &format!("SET {k} v-{k}")).await.unwrap();
+        }
+        assert_eq!(
+            run(s.as_ref(), "GET user:2").await.unwrap(),
+            [[Value::Text("v-user:2".into())]]
+        );
+        let tree = s.introspect().unwrap();
+        let q = ChildQuery {
+            filter: None,
+            cursor: None,
+            limit: 100,
+        };
+        let root = tree.children(&ObjectPath::root(), &q).await.unwrap();
+        assert_eq!(root.nodes.len(), 1, "{root:?}");
+        let keys = tree.children(&root.nodes[0].path, &q).await.unwrap();
+        let names: Vec<&str> = keys.nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, ["user:", "a", "b", "c"], "{keys:?}");
+        assert_eq!(keys.nodes[1].detail.as_deref(), Some("string"));
+        // A database other than 0 is refused: a cluster has none.
+        let mut other = config.clone();
+        other.database = Some("2".into());
+        let e = RedisDriver::redis()
+            .connect(&other, ctx(Arc::new(MapSecrets::password(PASSWORD))))
+            .await
+            .err()
+            .unwrap();
+        assert!(e.message.contains("only database 0"), "{e:?}");
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn redis_specifics() {
         let s = Server::start(Engine::Redis).await;

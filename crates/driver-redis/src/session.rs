@@ -7,12 +7,12 @@
 //! connection with CLIENT UNBLOCK; anything else that runs long with CLIENT KILL, after which the
 //! connection opens again.
 
+use crate::conn::{Conn, Opener};
 use crate::error;
 use crate::lang::{self, CommandTable, RedisAnalyzer};
 use crate::value::{self, Shape};
 use async_trait::async_trait;
-use futures::stream;
-use redis::aio::MultiplexedConnection;
+use futures::{StreamExt, stream};
 use redis::{
     AsyncConnectionConfig, Client, ConnectionAddr, IntoConnectionInfo, ProtocolVersion,
     RedisConnectionInfo, Value as R,
@@ -22,7 +22,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
 use treasury_core::analyze::{Analyzer, StatementClass};
 use treasury_core::config::{ConnectionConfig, Endpoint, Engine, SecretSlot, TlsMode};
 use treasury_core::driver::{
@@ -41,14 +40,14 @@ pub struct RedisSession {
     pub(crate) engine: Engine,
     pub(crate) host: String,
     pub(crate) port: u16,
-    pub(crate) client: Client,
-    conn: tokio::sync::Mutex<MultiplexedConnection>,
+    opener: Opener,
+    conn: tokio::sync::Mutex<Conn>,
     /// The server's id for `conn`, for CLIENT UNBLOCK and CLIENT KILL.
     id: Arc<AtomicI64>,
     /// The database commands run in, unless one SELECTs another.
     pub(crate) db: i64,
-    /// Connections to other databases, for the key browser.
-    db_conns: tokio::sync::Mutex<HashMap<i64, MultiplexedConnection>>,
+    /// Connections to each database, for the key browser.
+    db_conns: tokio::sync::Mutex<HashMap<i64, Conn>>,
     pub(crate) delimiter: String,
     pub(crate) metadata_timeout: Duration,
     connect_timeout: Duration,
@@ -65,9 +64,24 @@ pub struct RedisSession {
     _bridge: Option<TlsBridge>,
 }
 
-/// The server's id for `conn`.
-async fn client_id(conn: &mut MultiplexedConnection) -> redis::RedisResult<i64> {
-    redis::cmd("CLIENT").arg("ID").query_async(conn).await
+/// The server's id for `conn`; 0 on a cluster, whose commands use a connection per node.
+async fn client_id(conn: &mut Conn) -> i64 {
+    if conn.is_cluster() {
+        return 0;
+    }
+    conn.query(&redis::cmd("CLIENT").arg("ID").to_owned())
+        .await
+        .unwrap_or(0)
+}
+
+/// The file at `path`, for a TLS setting.
+fn read_pem(path: &std::path::Path) -> Result<Vec<u8>> {
+    std::fs::read(path).map_err(|e| {
+        Error::config(
+            Some("tls"),
+            format!("{} could not be read: {e}.", path.display()),
+        )
+    })
 }
 
 /// `COMMAND`'s reply as a table of ACL categories, subcommands included.
@@ -144,9 +158,73 @@ pub(crate) async fn connect(
         .secret(SecretSlot::Password)?
         .map(|p| p.expose_secret().to_owned());
     let redis_settings = settings(config, password, db);
-    let sentinel = config.options.get("mode").map(String::as_str) == Some("sentinel");
+    let mode_option = config.options.get("mode").map(String::as_str);
+    let sentinel = mode_option == Some("sentinel");
     let tls_on = config.tls.mode != TlsMode::Disable;
-    let (host, port, client, bridge, mode) = if sentinel {
+    let (host, port, opener, bridge, mode) = if mode_option == Some("cluster") {
+        let hosts = match &config.endpoint {
+            Endpoint::Hosts { hosts } if !hosts.is_empty() => hosts.clone(),
+            Endpoint::Host { host, port } => vec![(host.clone(), *port)],
+            _ => return Err(Error::config(Some("host"), "Enter a node of the cluster.")),
+        };
+        if ctx.via.is_some() {
+            return Err(Error::unsupported(
+                "A cluster hands out the addresses of its nodes, which an SSH tunnel to one host \
+                 cannot reach.",
+            ));
+        }
+        if db != 0 {
+            return Err(Error::config(
+                Some("database"),
+                "A Redis Cluster has only database 0.",
+            ));
+        }
+        let (h0, p0) = hosts[0].clone();
+        let seeds: Vec<ConnectionAddr> = hosts
+            .iter()
+            .map(|(h, p)| ConnectionAddr::Tcp(h.clone(), *p))
+            .collect();
+        let mut b = redis::cluster::ClusterClient::builder(seeds)
+            .use_protocol(ProtocolVersion::RESP3)
+            .connection_timeout(ctx.connect_timeout);
+        if let Some(user) = config.user.as_deref().filter(|u| !u.is_empty()) {
+            b = b.username(user);
+        }
+        if let Some(p) = ctx.secrets.secret(SecretSlot::Password)? {
+            b = b.password(p.expose_secret());
+        }
+        if tls_on {
+            // A cluster's nodes are dialed by the addresses the cluster gives, so the client's
+            // own TLS is used, with the system's trust store or the CA set here.
+            if ctx.secrets.secret(SecretSlot::KeyPassphrase)?.is_some() {
+                return Err(Error::config(
+                    Some("tls"),
+                    "Redis Cluster connections need a client key without a passphrase.",
+                ));
+            }
+            b = b.tls(if config.tls.accept_invalid {
+                redis::TlsMode::Insecure
+            } else {
+                redis::TlsMode::Secure
+            });
+            let client_tls = match (&config.tls.client_cert, &config.tls.client_key) {
+                (Some(c), Some(k)) => Some(redis::ClientTlsConfig {
+                    client_cert: read_pem(c)?,
+                    client_key: read_pem(k)?,
+                }),
+                _ => None,
+            };
+            let root_cert = config.tls.ca_file.as_deref().map(read_pem).transpose()?;
+            if client_tls.is_some() || root_cert.is_some() {
+                b = b.certs(redis::TlsCertificates {
+                    client_tls,
+                    root_cert,
+                });
+            }
+        }
+        let client = b.build().map_err(|e| error::map(&e, &h0, p0))?;
+        (h0, p0, Opener::Cluster(Box::new(client)), None, "cluster")
+    } else if sentinel {
         let hosts = match &config.endpoint {
             Endpoint::Hosts { hosts } if !hosts.is_empty() => hosts.clone(),
             Endpoint::Host { host, port } => vec![(host.clone(), *port)],
@@ -197,7 +275,7 @@ pub(crate) async fn connect(
             } => (h.clone(), *p),
             _ => (hosts[0].0.clone(), hosts[0].1),
         };
-        (h, p, client, None, "sentinel")
+        (h, p, Opener::One(Box::new(client)), None, "sentinel")
     } else {
         let Endpoint::Host { host, port } = &config.endpoint else {
             return Err(Error::config(
@@ -247,30 +325,36 @@ pub(crate) async fn connect(
             .map_err(|e| error::map(&e, &host, port))?
             .set_redis_settings(redis_settings);
         let client = Client::open(info).map_err(|e| error::map(&e, &host, port))?;
-        (host, port, client, bridge, "standalone")
+        (
+            host,
+            port,
+            Opener::One(Box::new(client)),
+            bridge,
+            "standalone",
+        )
     };
-    let options = AsyncConnectionConfig::new()
-        .set_connection_timeout(Some(ctx.connect_timeout))
-        .set_response_timeout(None);
     let mut conn = tokio::time::timeout(
         ctx.connect_timeout + Duration::from_secs(1),
-        client.get_multiplexed_async_connection_with_config(&options),
+        opener.open(ctx.connect_timeout),
     )
     .await
     .map_err(|_| Error::timeout(ctx.connect_timeout))?
     .map_err(|e| error::map(&e, &host, port))?;
+    // A cluster checks its credentials when it first reaches a node.
+    conn.query::<R>(&redis::cmd("PING"))
+        .await
+        .map_err(|e| error::map(&e, &host, port))?;
     // A user without CLIENT ID still connects; cancelling then has nothing to name.
-    let id = client_id(&mut conn).await.unwrap_or(0);
+    let id = client_id(&mut conn).await;
     // The server's own description of its commands decides their classes; a user who may
     // not run COMMAND gets the built-in table.
-    let table = redis::cmd("COMMAND")
-        .query_async::<R>(&mut conn)
+    let table = conn
+        .query::<R>(&redis::cmd("COMMAND"))
         .await
         .map(|r| command_table(&r))
         .unwrap_or_default();
-    let info: String = redis::cmd("INFO")
-        .arg("server")
-        .query_async(&mut conn)
+    let info: String = conn
+        .query(redis::cmd("INFO").arg("server"))
         .await
         .unwrap_or_default();
     let version = info_field(&info, "valkey_version")
@@ -281,7 +365,7 @@ pub(crate) async fn connect(
         engine,
         host,
         port,
-        client,
+        opener,
         conn: tokio::sync::Mutex::new(conn),
         id: Arc::new(AtomicI64::new(id)),
         db,
@@ -294,7 +378,10 @@ pub(crate) async fn connect(
         metadata_timeout: ctx.metadata_timeout,
         connect_timeout: ctx.connect_timeout,
         analyzer: RedisAnalyzer::new(table),
-        run_id: info_field(&info, "run_id").map(str::to_owned),
+        // A cluster answers from any node, so a run id says nothing about a restart there.
+        run_id: (mode != "cluster")
+            .then(|| info_field(&info, "run_id").map(str::to_owned))
+            .flatten(),
         version,
         mode,
         closed: AtomicBool::new(false),
@@ -321,41 +408,44 @@ impl RedisSession {
         Ok(())
     }
 
-    async fn open(&self) -> Result<MultiplexedConnection> {
-        let options = AsyncConnectionConfig::new()
-            .set_connection_timeout(Some(self.connect_timeout))
-            .set_response_timeout(None);
-        self.client
-            .get_multiplexed_async_connection_with_config(&options)
+    async fn open(&self) -> Result<Conn> {
+        self.opener
+            .open(self.connect_timeout)
             .await
             .map_err(|e| self.map(&e))
     }
 
     /// The connection commands run on.
-    pub(crate) async fn conn(&self) -> MultiplexedConnection {
+    pub(crate) async fn conn(&self) -> Conn {
         self.conn.lock().await.clone()
+    }
+
+    /// Whether this is a cluster.
+    pub(crate) fn cluster(&self) -> bool {
+        matches!(self.opener, Opener::Cluster(_))
     }
 
     /// Opens the connection again, after CLIENT KILL broke it.
     async fn reopen(&self) -> Result<()> {
         let mut fresh = self.open().await?;
-        let id = client_id(&mut fresh).await.unwrap_or(0);
-        self.id.store(id, Ordering::SeqCst);
+        self.id.store(client_id(&mut fresh).await, Ordering::SeqCst);
         *self.conn.lock().await = fresh;
         Ok(())
     }
 
     /// A connection to database `db`, for the key browser: never the one commands run on,
-    /// which a SELECT typed in the editor moves to another database.
-    pub(crate) async fn db_conn(&self, db: i64) -> Result<MultiplexedConnection> {
+    /// which a SELECT typed in the editor moves to another database. A cluster has only
+    /// database 0, and its connection routes by key.
+    pub(crate) async fn db_conn(&self, db: i64) -> Result<Conn> {
+        if self.cluster() {
+            return Ok(self.conn().await);
+        }
         let mut conns = self.db_conns.lock().await;
         if let Some(c) = conns.get(&db) {
             return Ok(c.clone());
         }
         let mut c = self.open().await?;
-        redis::cmd("SELECT")
-            .arg(db)
-            .query_async::<()>(&mut c)
+        c.query::<()>(redis::cmd("SELECT").arg(db))
             .await
             .map_err(|e| self.map(&e))?;
         conns.insert(db, c.clone());
@@ -365,23 +455,24 @@ impl RedisSession {
     /// Runs a command for metadata under the metadata time limit.
     pub(crate) async fn meta<T: redis::FromRedisValue>(
         &self,
-        conn: &mut MultiplexedConnection,
+        conn: &mut Conn,
         cmd: &redis::Cmd,
     ) -> Result<T> {
         self.alive()?;
-        tokio::time::timeout(self.metadata_timeout, cmd.query_async(conn))
+        tokio::time::timeout(self.metadata_timeout, conn.query(cmd))
             .await
             .map_err(|_| Error::timeout(self.metadata_timeout))?
             .map_err(|e| self.map(&e))
     }
 
-    fn side(&self) -> SideCancel {
-        SideCancel {
-            client: self.client.clone(),
+    /// What stops a command from a second connection; `None` on a cluster.
+    fn side(&self) -> Option<SideCancel> {
+        Some(SideCancel {
+            client: self.opener.single()?.clone(),
             id: self.id.clone(),
             timeout: self.connect_timeout,
             broken: self.broken.clone(),
-        }
+        })
     }
 }
 
@@ -442,9 +533,13 @@ fn bounds(start: i64, stop: i64, len: i64) -> Option<(i64, i64)> {
     (s <= e && len > 0).then_some((s, e))
 }
 
-/// What the task running one command needs.
+/// What running one command needs. Its result stream does the reading: a page is read when
+/// the result asks for more rows, on the reader's own task, so nothing piles up in between and
+/// dropping the stream stops the reading.
 struct Run {
-    conn: MultiplexedConnection,
+    conn: Conn,
+    /// When the time limit runs out, if there is one.
+    deadline: Option<Instant>,
     argv: Vec<String>,
     writes: bool,
     host: String,
@@ -452,7 +547,8 @@ struct Run {
     stopped: Arc<AtomicBool>,
     timed_out: Arc<AtomicBool>,
     limit: Option<Duration>,
-    tx: mpsc::Sender<Result<ExecEvent>>,
+    /// The statement has ended, so a time limit has nothing left to stop.
+    done: Arc<AtomicBool>,
 }
 
 impl Run {
@@ -472,35 +568,32 @@ impl Run {
         }
     }
 
-    async fn send(&self, e: Result<ExecEvent>) -> bool {
-        self.tx.send(e).await.is_ok()
-    }
-
     async fn query<T: redis::FromRedisValue>(&self, cmd: &redis::Cmd) -> Result<T> {
         let mut conn = self.conn.clone();
-        cmd.query_async(&mut conn).await.map_err(|e| self.map(&e))
-    }
-
-    async fn run(self) {
-        let outcome = match paged(&self.argv) {
-            Some(p) => self.pages(p).await,
-            None => self.single().await,
+        // The time limit holds here too: on a cluster nothing else can stop a command.
+        let Some(deadline) = self.deadline else {
+            return conn.query(cmd).await.map_err(|e| self.map(&e));
         };
-        let outcome = match outcome {
-            Ok(()) if self.stopped.load(Ordering::SeqCst) => Err(self.stop_error()),
-            other => other,
-        };
-        if let Err(e) = outcome {
-            let _ = self.tx.send(Err(e)).await;
+        let left = deadline.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(left, conn.query(cmd)).await {
+            Ok(r) => r.map_err(|e| self.map(&e)),
+            Err(_) => {
+                self.timed_out.store(true, Ordering::SeqCst);
+                self.stopped.store(true, Ordering::SeqCst);
+                Err(self.stop_error())
+            }
         }
     }
 
-    async fn single(&self) -> Result<()> {
+    /// A command with one reply, as events.
+    async fn single(&self) -> Result<Vec<ExecEvent>> {
         let mut cmd = redis::cmd(&self.argv[0]);
         for a in &self.argv[1..] {
             cmd.arg(a);
         }
-        let reply: R = self.query(&cmd).await?;
+        let reply = self.query::<R>(&cmd).await;
+        self.done.store(true, Ordering::SeqCst);
+        let reply = reply?;
         if let R::ServerError(e) = &reply {
             return Err(Error::new(ErrorKind::Server, e.to_string()));
         }
@@ -510,125 +603,184 @@ impl Run {
         };
         // A write that answers with a number says how many keys or entries it changed.
         if let (true, R::Int(n)) = (self.writes, &reply) {
-            let _ = self.send(Ok(end(u64::try_from(*n).ok()))).await;
-            return Ok(());
+            return Ok(vec![end(u64::try_from(*n).ok())]);
         }
-        match value::shape(&reply) {
-            Shape::Done => {
-                let _ = self.send(Ok(end(None))).await;
-            }
+        Ok(match value::shape(&reply) {
+            Shape::Done => vec![end(None)],
             Shape::Rows { columns, rows } => {
-                if self.send(Ok(ExecEvent::ResultStart(columns))).await
-                    && self.send(Ok(ExecEvent::Rows(rows))).await
-                {
-                    let _ = self.send(Ok(end(None))).await;
-                }
+                vec![
+                    ExecEvent::ResultStart(columns),
+                    ExecEvent::Rows(rows),
+                    end(None),
+                ]
             }
+        })
+    }
+}
+
+/// Where a paged read has got to.
+enum Position {
+    /// Entries `at..=last` of a list or sorted set are still to read.
+    Range { at: i64, last: i64 },
+    /// HSCAN or SSCAN continues from this cursor.
+    Scan(String),
+    /// Everything was read.
+    End,
+}
+
+/// A large reply read a page at a time.
+struct Pager {
+    run: Run,
+    paged: Paged,
+    names: &'static [&'static str],
+    /// `None` before the first page.
+    position: Option<Position>,
+    started: bool,
+    ended: bool,
+}
+
+impl Pager {
+    fn new(run: Run, paged: Paged) -> Self {
+        let names: &'static [&'static str] = match &paged {
+            Paged::Zset { scores: true, .. } => &["member", "score"],
+            Paged::Zset { .. } | Paged::Set { .. } => &["member"],
+            Paged::Hash { .. } => &["field", "value"],
+            Paged::List { .. } => &["value"],
+        };
+        Self {
+            run,
+            paged,
+            names,
+            position: None,
+            started: false,
+            ended: false,
         }
-        Ok(())
     }
 
-    /// Sends one page; the columns go first, from the first page's values.
-    async fn page(
-        &self,
-        names: &[&str],
-        rows: Vec<Vec<treasury_core::Value>>,
-        first: &mut bool,
-    ) -> bool {
-        if *first {
-            *first = false;
-            let names: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
-            if !self
-                .send(Ok(ExecEvent::ResultStart(value::columns(&names, &rows))))
-                .await
-            {
-                return false;
-            }
-        }
-        rows.is_empty() || self.send(Ok(ExecEvent::Rows(rows))).await
-    }
-
-    async fn pages(&self, p: Paged) -> Result<()> {
-        let mut first = true;
-        match &p {
+    /// Where reading starts: the absolute range of a list or sorted set, or a fresh cursor.
+    async fn begin(&self) -> Result<Position> {
+        Ok(match &self.paged {
             Paged::List { key, start, stop }
             | Paged::Zset {
                 key, start, stop, ..
             } => {
-                let (len_cmd, range_cmd, names): (&str, &str, &[&str]) = match &p {
-                    Paged::Zset { scores: true, .. } => ("ZCARD", "ZRANGE", &["member", "score"]),
-                    Paged::Zset { .. } => ("ZCARD", "ZRANGE", &["member"]),
-                    _ => ("LLEN", "LRANGE", &["value"]),
+                let len_cmd = if matches!(self.paged, Paged::List { .. }) {
+                    "LLEN"
+                } else {
+                    "ZCARD"
                 };
-                let len: i64 = self.query(redis::cmd(len_cmd).arg(key)).await?;
-                if let Some((mut at, last)) = bounds(*start, *stop, len) {
-                    while at <= last {
-                        let to = (at + i64::try_from(PAGE).unwrap_or(1_000) - 1).min(last);
-                        let mut cmd = redis::cmd(range_cmd);
-                        cmd.arg(key).arg(at).arg(to);
-                        if matches!(p, Paged::Zset { scores: true, .. }) {
-                            cmd.arg("WITHSCORES");
-                        }
-                        let reply: R = self.query(&cmd).await?;
-                        let items = match &reply {
-                            R::Array(i) | R::Set(i) => i.as_slice(),
-                            _ => &[],
-                        };
-                        if items.is_empty() {
-                            break;
-                        }
-                        let (_, rows) = value::list_rows(items);
-                        if !self.page(names, rows, &mut first).await {
-                            return Ok(());
-                        }
-                        at = to + 1;
-                    }
-                }
-                if first && !self.page(names, Vec::new(), &mut first).await {
-                    return Ok(());
+                let len: i64 = self.run.query(redis::cmd(len_cmd).arg(key)).await?;
+                match bounds(*start, *stop, len) {
+                    Some((at, last)) => Position::Range { at, last },
+                    None => Position::End,
                 }
             }
-            Paged::Hash { key } | Paged::Set { key } => {
-                let (scan, names): (&str, &[&str]) = match p {
-                    Paged::Hash { .. } => ("HSCAN", &["field", "value"]),
-                    _ => ("SSCAN", &["member"]),
-                };
-                let mut cursor = "0".to_owned();
-                loop {
-                    let (next, items): (String, Vec<R>) = self
-                        .query(
-                            redis::cmd(scan)
-                                .arg(key)
-                                .arg(&cursor)
-                                .arg("COUNT")
-                                .arg(PAGE),
-                        )
-                        .await?;
-                    let rows: Vec<Vec<treasury_core::Value>> = if names.len() == 2 {
-                        items
-                            .chunks(2)
-                            .map(|kv| kv.iter().map(value::cell).collect())
-                            .collect()
-                    } else {
-                        items.iter().map(|m| vec![value::cell(m)]).collect()
-                    };
-                    if !self.page(names, rows, &mut first).await {
-                        return Ok(());
-                    }
-                    if next == "0" {
-                        break;
-                    }
-                    cursor = next;
-                }
-            }
+            Paged::Hash { .. } | Paged::Set { .. } => Position::Scan("0".into()),
+        })
+    }
+
+    /// The columns before the first rows, then the rows.
+    fn emit(&mut self, rows: Vec<Vec<treasury_core::Value>>) -> Vec<ExecEvent> {
+        let mut out = Vec::new();
+        if !self.started {
+            self.started = true;
+            let names: Vec<String> = self.names.iter().map(|n| (*n).to_owned()).collect();
+            out.push(ExecEvent::ResultStart(value::columns(&names, &rows)));
         }
-        let _ = self
-            .send(Ok(ExecEvent::ResultEnd {
-                affected: None,
-                truncated: false,
-            }))
-            .await;
-        Ok(())
+        if !rows.is_empty() {
+            out.push(ExecEvent::Rows(rows));
+        }
+        out
+    }
+
+    /// The events of the next page; `None` once the result has ended.
+    async fn next(&mut self) -> Result<Option<Vec<ExecEvent>>> {
+        if self.ended {
+            return Ok(None);
+        }
+        if self.run.stopped.load(Ordering::SeqCst) {
+            return Err(self.run.stop_error());
+        }
+        let position = match self.position.take() {
+            Some(p) => p,
+            None => self.begin().await?,
+        };
+        let page = i64::try_from(PAGE).unwrap_or(1_000);
+        let (rows, next) = match position {
+            Position::End => {
+                self.ended = true;
+                self.run.done.store(true, Ordering::SeqCst);
+                let mut out = self.emit(Vec::new());
+                out.push(ExecEvent::ResultEnd {
+                    affected: None,
+                    truncated: false,
+                });
+                return Ok(Some(out));
+            }
+            Position::Range { at, last } => {
+                let to = (at + page - 1).min(last);
+                let (key, range) = match &self.paged {
+                    Paged::Zset { key, .. } => (key, "ZRANGE"),
+                    Paged::List { key, .. } | Paged::Hash { key } | Paged::Set { key } => {
+                        (key, "LRANGE")
+                    }
+                };
+                let mut cmd = redis::cmd(range);
+                cmd.arg(key).arg(at).arg(to);
+                if matches!(self.paged, Paged::Zset { scores: true, .. }) {
+                    cmd.arg("WITHSCORES");
+                }
+                let items = match self.run.query::<R>(&cmd).await? {
+                    R::Array(i) | R::Set(i) => i,
+                    _ => Vec::new(),
+                };
+                let next = if items.is_empty() || to >= last {
+                    Position::End
+                } else {
+                    Position::Range { at: to + 1, last }
+                };
+                (value::page_rows(items), next)
+            }
+            Position::Scan(cursor) => {
+                let (key, scan) = match &self.paged {
+                    Paged::Hash { key } => (key, "HSCAN"),
+                    Paged::Set { key } | Paged::List { key, .. } | Paged::Zset { key, .. } => {
+                        (key, "SSCAN")
+                    }
+                };
+                let (next, items): (String, Vec<R>) = self
+                    .run
+                    .query(
+                        redis::cmd(scan)
+                            .arg(key)
+                            .arg(&cursor)
+                            .arg("COUNT")
+                            .arg(PAGE),
+                    )
+                    .await?;
+                let rows = if self.names.len() == 2 {
+                    let mut it = items.into_iter();
+                    let mut rows = Vec::new();
+                    while let (Some(k), Some(v)) = (it.next(), it.next()) {
+                        rows.push(vec![value::into_cell(k), value::into_cell(v)]);
+                    }
+                    rows
+                } else {
+                    items
+                        .into_iter()
+                        .map(|m| vec![value::into_cell(m)])
+                        .collect()
+                };
+                let next = if next == "0" {
+                    Position::End
+                } else {
+                    Position::Scan(next)
+                };
+                (rows, next)
+            }
+        };
+        self.position = Some(next);
+        Ok(Some(self.emit(rows)))
     }
 }
 
@@ -640,7 +792,11 @@ impl Session for RedisSession {
             introspect: true,
             ddl: false,
             explain: None,
-            cancel: CancelMethod::KillFromSecondConnection,
+            cancel: if self.cluster() {
+                CancelMethod::ClientOnly
+            } else {
+                CancelMethod::KillFromSecondConnection
+            },
             health: false,
             edit: false,
             transactions: false,
@@ -748,9 +904,10 @@ impl Execute for RedisSession {
         }
         self.stopped.store(false, Ordering::SeqCst);
         self.timed_out.store(false, Ordering::SeqCst);
-        let (tx, rx) = mpsc::channel(1);
+        let done = Arc::new(AtomicBool::new(false));
         let run = Run {
             conn: self.conn().await,
+            deadline: req.timeout.map(|t| Instant::now() + t),
             argv,
             writes,
             host: self.host.clone(),
@@ -758,24 +915,49 @@ impl Execute for RedisSession {
             stopped: self.stopped.clone(),
             timed_out: self.timed_out.clone(),
             limit: req.timeout,
-            tx,
+            done: done.clone(),
         };
-        let task = tokio::spawn(run.run());
-        if let Some(limit) = req.timeout {
+        // On one server, a command past its time limit is also stopped there.
+        if let (Some(limit), Some(this)) = (req.timeout, self.side()) {
             let (stopped, flag) = (self.stopped.clone(), self.timed_out.clone());
-            let this = self.side();
             tokio::spawn(async move {
                 tokio::time::sleep(limit).await;
-                if !task.is_finished() {
+                if !done.load(Ordering::SeqCst) {
                     flag.store(true, Ordering::SeqCst);
                     stopped.store(true, Ordering::SeqCst);
                     this.unblock_or_kill().await;
                 }
             });
         }
-        Ok(Box::pin(stream::unfold(rx, |mut rx| async move {
-            rx.recv().await.map(|item| (item, rx))
-        })))
+        let events: ExecStream = match paged(&run.argv) {
+            Some(p) => Box::pin(
+                stream::unfold(Some(Pager::new(run, p)), |pager| async move {
+                    let mut pager = pager?;
+                    match pager.next().await {
+                        Ok(Some(events)) => {
+                            Some((events.into_iter().map(Ok).collect::<Vec<_>>(), Some(pager)))
+                        }
+                        Ok(None) => None,
+                        // An error ends the result.
+                        Err(e) => {
+                            pager.run.done.store(true, Ordering::SeqCst);
+                            Some((vec![Err(e)], None))
+                        }
+                    }
+                })
+                .flat_map(stream::iter),
+            ),
+            None => Box::pin(
+                stream::once(async move {
+                    match run.single().await {
+                        Ok(events) => events.into_iter().map(Ok).collect::<Vec<_>>(),
+                        Err(e) => vec![Err(e)],
+                    }
+                })
+                .flat_map(stream::iter),
+            ),
+        };
+        Ok(events)
     }
 }
 
@@ -821,9 +1003,12 @@ impl SideCancel {
 
 #[async_trait]
 impl Cancel for RedisSession {
+    /// On a cluster, the node runs a command to its end; Treasury stops reading it.
     async fn cancel(&self) -> Result<()> {
         self.stopped.store(true, Ordering::SeqCst);
-        self.side().unblock_or_kill().await;
+        if let Some(side) = self.side() {
+            side.unblock_or_kill().await;
+        }
         Ok(())
     }
 }

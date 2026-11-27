@@ -2,11 +2,13 @@
 //!
 //! The editor language is commands as redis-cli takes them, one per line. A single server is
 //! reached directly or through an SSH tunnel, with TLS made by Treasury's own bridge; with
-//! Sentinel, the master the Sentinels name. Redis has no read-only session, so the guardrails
+//! Sentinel, the master the Sentinels name; a cluster, through its nodes, each command going to
+//! the node that holds its key. Redis has no read-only session, so the guardrails
 //! enforce read-only from the ACL categories the server gives each command.
 
 #![forbid(unsafe_code)]
 
+mod conn;
 mod error;
 mod introspect;
 pub mod lang;

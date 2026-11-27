@@ -116,6 +116,32 @@ pub fn columns(names: &[String], rows: &[Vec<Value>]) -> Vec<Column> {
         .collect()
 }
 
+/// A cell from a reply value it consumes, so bulk strings keep their bytes rather than being
+/// copied: a page of a large list is read without a second allocation per entry.
+pub fn into_cell(v: R) -> Value {
+    match v {
+        R::BulkString(b) => match String::from_utf8(b) {
+            Ok(s) => Value::Text(s),
+            Err(e) => Value::Bytes(Blob::full(e.into_bytes())),
+        },
+        R::SimpleString(s) => Value::Text(s),
+        R::VerbatimString { text, .. } => Value::Text(text),
+        other => cell(&other),
+    }
+}
+
+/// The rows of a page of plain entries (LRANGE, ZRANGE), consuming the reply: one column, or
+/// one per position when every entry is a list (a member and its score).
+pub fn page_rows(items: Vec<R>) -> Vec<Vec<Value>> {
+    items
+        .into_iter()
+        .map(|i| match i {
+            R::Array(inner) | R::Set(inner) => inner.into_iter().map(into_cell).collect(),
+            other => vec![into_cell(other)],
+        })
+        .collect()
+}
+
 /// The rows of a list: one column, or one per position when every item is itself a list.
 pub fn list_rows(items: &[R]) -> (Vec<String>, Vec<Vec<Value>>) {
     let all_lists = !items.is_empty() && items.iter().all(|i| matches!(i, R::Array(_) | R::Set(_)));
@@ -209,6 +235,17 @@ mod tests {
         );
         assert_eq!(rows[0][0], Value::I64(42));
         assert_eq!(rows[0][4], Value::Bytes(Blob::full(vec![0xff, 0x00])));
+    }
+
+    #[test]
+    fn pages_keep_the_bytes_they_read() {
+        let rows = page_rows(vec![
+            R::Array(vec![b("a"), R::Double(1.5)]),
+            R::Array(vec![R::BulkString(vec![0xff]), R::Double(2.0)]),
+        ]);
+        assert_eq!(rows[0], [Value::Text("a".into()), Value::F64(1.5)]);
+        assert_eq!(rows[1][0], Value::Bytes(Blob::full(vec![0xff])));
+        assert_eq!(page_rows(vec![b("x")]), [[Value::Text("x".into())]]);
     }
 
     #[test]
