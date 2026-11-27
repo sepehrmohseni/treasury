@@ -3,10 +3,12 @@
 ## Cutting a release
 
 1. Make sure `main` is green in CI.
-2. Run `cargo xtask release <version>` (or `scripts/docker-check.sh release <version>` without a
+2. If the release deserves more than its changelog section, write its notes for the people
+   downloading it in `docs/release-notes/<version>.md` and commit them.
+3. Run `cargo xtask release <version>` (or `scripts/docker-check.sh release <version>` without a
    local toolchain). It sets the version in every manifest, regenerates `CHANGELOG.md`, commits
    `chore(release): <version>` and creates the tag `v<version>`.
-3. Push both: `git push origin main v<version>`. The `release` workflow builds, signs, publishes
+4. Push both: `git push origin main v<version>`. The `release` workflow builds, signs, publishes
    and then verifies the release.
 
 ## What the release workflow does
@@ -26,8 +28,10 @@
    `.sig` file next to it.
 4. Publishes one release, marked latest, with every package, `SHA256SUMS`, a CycloneDX SBOM,
    build provenance attestations, and `latest.json`, the feed the app's updater reads. The feed
-   is written by `cargo xtask latest-json` from the signed packages. The notes come from the
-   Conventional Commits since the previous tag (git-cliff).
+   is written by `cargo xtask latest-json` from the signed packages. The notes are
+   `docs/release-notes/<version>.md` when that file exists, written for the people downloading
+   the release; otherwise they are the version's section of the changelog, from the Conventional
+   Commits since the previous tag (git-cliff).
 5. Downloads the published release, checks every checksum, and checks that every URL in
    `latest.json` answers and that the latest release's feed names the new version.
 

@@ -180,8 +180,17 @@ jobs:
           pattern: packages-*
           path: assets
           merge-multiple: true
+      # Hand-written notes for the version when there are some, otherwise the changelog section.
       - name: Release notes
-        run: git-cliff --latest --strip header > notes.md && cat notes.md
+        run: |
+          written="docs/release-notes/${GITHUB_REF_NAME#v}.md"
+          if [ -f "$written" ]; then
+            cp "$written" notes.md
+          else
+            git-cliff --latest --strip header > notes.md
+          fi
+          test -s notes.md
+          cat notes.md
       - name: Update feed, SBOM and checksums
         env:
           TREASURY_RELEASE_NOTES: notes.md
