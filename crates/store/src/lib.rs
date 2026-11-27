@@ -120,6 +120,8 @@ pub enum RunStatus {
     Failed,
     /// Cancelled by the user.
     Cancelled,
+    /// Started, and not completed yet: still running, or Treasury quit before it ended.
+    Unfinished,
 }
 
 impl RunStatus {
@@ -128,6 +130,7 @@ impl RunStatus {
             RunStatus::Ok => "ok",
             RunStatus::Failed => "failed",
             RunStatus::Cancelled => "cancelled",
+            RunStatus::Unfinished => "unfinished",
         }
     }
 
@@ -135,6 +138,7 @@ impl RunStatus {
         match s {
             "ok" => RunStatus::Ok,
             "cancelled" => RunStatus::Cancelled,
+            "unfinished" => RunStatus::Unfinished,
             _ => RunStatus::Failed,
         }
     }
@@ -381,6 +385,21 @@ impl Store {
             )?;
         }
         Ok(id)
+    }
+
+    /// Completes entry `id`, written as [`RunStatus::Unfinished`] when its statement started.
+    pub fn finish_history(
+        &self,
+        id: i64,
+        duration_ms: i64,
+        rows: Option<i64>,
+        status: RunStatus,
+    ) -> Result<()> {
+        self.lock().execute(
+            "UPDATE history SET duration_ms = ?2, rows = ?3, status = ?4 WHERE id = ?1",
+            params![id, duration_ms, rows, status.as_str()],
+        )?;
+        Ok(())
     }
 
     /// The most recent history of `connection` (all connections when `None`), newest first,

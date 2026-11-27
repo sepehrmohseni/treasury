@@ -104,6 +104,7 @@ fn main() {
             commands::setting,
             commands::set_setting,
             commands::history,
+            commands::purge_history,
             commands::tabs,
             commands::open_tab,
             commands::save_tab,
@@ -116,9 +117,19 @@ fn main() {
             commands::check_update,
             commands::install_update,
         ])
-        .run(tauri::generate_context!());
-    if let Err(e) = result {
-        eprintln!("Treasury could not start: {e}");
-        std::process::exit(1);
+        .build(tauri::generate_context!());
+    match result {
+        // On the way out, results still open complete their history entries.
+        Ok(app) => app.run(|app, event| {
+            if let tauri::RunEvent::Exit = event
+                && let Some(state) = app.try_state::<AppState>()
+            {
+                state.runtime.close_all();
+            }
+        }),
+        Err(e) => {
+            eprintln!("Treasury could not start: {e}");
+            std::process::exit(1);
+        }
     }
 }

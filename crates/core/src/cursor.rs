@@ -9,6 +9,7 @@ use crate::task::guarded;
 use futures::StreamExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Instant;
 use tokio::sync::watch;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -83,6 +84,8 @@ struct Shared {
     dropped_notices: u64,
     finished: bool,
     error: Option<Error>,
+    /// When the last event came from the server, or the reading ended.
+    last_event: Option<Instant>,
 }
 
 /// A statement's results.
@@ -113,6 +116,7 @@ impl Execution {
                 dropped_notices: 0,
                 finished: false,
                 error: None,
+                last_event: None,
             }),
             cancel_tx,
         }
@@ -149,6 +153,13 @@ impl Execution {
             finished: s.finished,
             error: s.error.clone(),
         }
+    }
+
+    /// When the server last sent something for this statement, or reading it ended. Results are
+    /// read only as far as they are shown, so this, not the time the result is closed, says how
+    /// long the statement took to give what was read.
+    pub fn last_event(&self) -> Option<Instant> {
+        self.lock().last_event
     }
 
     /// Stops reading. A fetch in progress ends with a cancelled error; the stream is dropped,
@@ -383,6 +394,7 @@ impl Execution {
     fn apply(&self, event: ExecEvent) -> Result<bool> {
         let page_rows = self.options.page_rows;
         let mut s = self.lock();
+        s.last_event = Some(Instant::now());
         match event {
             ExecEvent::ResultStart(columns) => {
                 // A new set implicitly ends the previous one.
@@ -466,6 +478,7 @@ impl Execution {
     fn finish(&self, error: Option<Error>) {
         let mut s = self.lock();
         s.finished = true;
+        s.last_event = Some(Instant::now());
         if let Some(last) = s.sets.last_mut() {
             last.ended = true;
         }

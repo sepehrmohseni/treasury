@@ -97,6 +97,68 @@ async fn reads_run_and_are_remembered() {
     let history = f.rt.store().history(Some(&c.id), None, 10).unwrap();
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].text, "rows 25");
+    assert_eq!(
+        (history[0].status, history[0].rows),
+        (RunStatus::Ok, Some(25))
+    );
+}
+
+/// The grid reads only the rows it shows, so most results are closed before their stream ends.
+#[tokio::test]
+async fn results_closed_before_the_end_are_remembered() {
+    let f = runtime();
+    let c = open(&f.rt, Environment::Development).await;
+    let p = f.rt.prepare(&c.id, "rows 25").await.unwrap();
+    let rid =
+        f.rt.run(&c.id, "rows 25", p.token, None, true)
+            .await
+            .unwrap();
+    // In the history from the start, as it runs.
+    let running = f.rt.store().history(Some(&c.id), None, 10).unwrap();
+    assert_eq!(running[0].status, RunStatus::Unfinished);
+    f.rt.window(rid, 0, 0, 10).await.unwrap();
+    // The time it took is how long the rows took to come, not how long the result stayed open.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    f.rt.close(rid);
+    let done = f.rt.store().history(Some(&c.id), None, 10).unwrap();
+    assert!(done[0].duration_ms < 250, "{} ms", done[0].duration_ms);
+    assert_eq!(done.len(), 1);
+    assert_eq!(done[0].status, RunStatus::Ok);
+    assert!(done[0].rows.is_some_and(|n| n >= 10), "{:?}", done[0].rows);
+
+    // Cancelled by the user, then closed.
+    let p = f.rt.prepare(&c.id, "rows 25").await.unwrap();
+    let rid =
+        f.rt.run(&c.id, "rows 25", p.token, None, true)
+            .await
+            .unwrap();
+    f.rt.cancel(rid).await.unwrap();
+    f.rt.close(rid);
+    assert_eq!(
+        f.rt.store().history(Some(&c.id), None, 10).unwrap()[0].status,
+        RunStatus::Cancelled
+    );
+
+    // Refused by the server.
+    let p = f.rt.prepare(&c.id, "syntax x").await.unwrap();
+    let rid =
+        f.rt.run(&c.id, "syntax x", p.token, None, true)
+            .await
+            .unwrap();
+    assert!(f.rt.window(rid, 0, 0, 10).await.is_err());
+    assert_eq!(
+        f.rt.store().history(Some(&c.id), None, 10).unwrap()[0].status,
+        RunStatus::Failed
+    );
+
+    // Still open when Treasury quits.
+    let p = f.rt.prepare(&c.id, "rows 3").await.unwrap();
+    f.rt.run(&c.id, "rows 3", p.token, None, true)
+        .await
+        .unwrap();
+    f.rt.close_all();
+    let last = &f.rt.store().history(Some(&c.id), None, 10).unwrap()[0];
+    assert_eq!((last.text.as_str(), last.status), ("rows 3", RunStatus::Ok));
 }
 
 #[tokio::test]

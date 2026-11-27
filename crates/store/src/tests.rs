@@ -217,6 +217,26 @@ fn history_search_uses_words_and_prefixes() {
 }
 
 #[test]
+fn an_entry_written_at_the_start_is_completed_later() {
+    let s = store();
+    let c = conn("a");
+    let mut e = entry(&c.id, "select pg_sleep(5)", 1);
+    e.status = RunStatus::Unfinished;
+    e.rows = None;
+    let id = s.add_history(&e).unwrap();
+    assert_eq!(
+        s.history(None, None, 10).unwrap()[0].status,
+        RunStatus::Unfinished
+    );
+    s.finish_history(id, 5_012, Some(1), RunStatus::Ok).unwrap();
+    let done = &s.history(None, None, 10).unwrap()[0];
+    assert_eq!(
+        (done.status, done.duration_ms, done.rows),
+        (RunStatus::Ok, 5_012, Some(1))
+    );
+}
+
+#[test]
 fn purge_removes_history() {
     let s = store();
     let a = conn("a");

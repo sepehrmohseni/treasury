@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use treasury_core::analyze::{CountPlan, LimitPlan, StatementClass};
@@ -105,10 +105,10 @@ pub struct Running {
     /// The text sent to the server (with the row limit, when one was added).
     pub text: String,
     started: Instant,
-    recorded: Mutex<bool>,
-    /// Whether this connection keeps history: its own setting, or else on except for
-    /// production.
-    history: bool,
+    /// The history entry written when the statement started, until it is completed.
+    history: Mutex<Option<i64>>,
+    /// The user cancelled it.
+    cancelled: AtomicBool,
     edit_target: Mutex<Option<edit::Target>>,
 }
 
@@ -479,9 +479,27 @@ impl Runtime {
             .session
             .execute()
             .ok_or_else(|| Error::unsupported("This connection cannot run statements."))?;
-        let stream = exec.execute(ExecRequest::new(text.clone())).await?;
+        let history = self.start_history(&live.config, statement);
+        let began = Instant::now();
+        let started = match exec.execute(ExecRequest::new(text.clone())).await {
+            Ok(stream) => {
+                PageStore::new(CACHE_BUDGET, self.spill_dir.clone()).map(|store| (stream, store))
+            }
+            Err(e) => Err(e),
+        };
+        let (stream, store) = match started {
+            Ok(ok) => ok,
+            Err(e) => {
+                if let Some(entry) = history {
+                    let took = i64::try_from(began.elapsed().as_millis()).unwrap_or(i64::MAX);
+                    let _ = self
+                        .store
+                        .finish_history(entry, took, None, RunStatus::Failed);
+                }
+                return Err(e);
+            }
+        };
         let stream = only_writes_count(stream, one.statement.class);
-        let store = PageStore::new(CACHE_BUDGET, self.spill_dir.clone())?;
         let max_rows = match (limit, live.session.analyzer().limit(statement, 1)) {
             (true, LimitPlan::StopFetching) => Some(self.row_limit()),
             _ => None,
@@ -504,16 +522,36 @@ impl Runtime {
                     connection: id.clone(),
                     execution,
                     text,
-                    started: Instant::now(),
-                    recorded: Mutex::new(false),
-                    history: live
-                        .config
-                        .history
-                        .unwrap_or(live.config.environment != Environment::Production),
+                    started: began,
+                    history: Mutex::new(history),
+                    cancelled: AtomicBool::new(false),
                     edit_target: Mutex::new(None),
                 }),
             );
         Ok(rid)
+    }
+
+    /// Writes the history entry of `statement` as it starts, if the connection keeps history
+    /// (its own setting, or else on except for production) and Settings has not turned it off.
+    /// Writing it now means it is there even if Treasury quits before the statement ends.
+    fn start_history(&self, config: &ConnectionConfig, statement: &str) -> Option<i64> {
+        let keeps = config
+            .history
+            .unwrap_or(config.environment != Environment::Production);
+        if !keeps || self.store.setting::<bool>("history").ok().flatten() == Some(false) {
+            return None;
+        }
+        self.store
+            .add_history(&HistoryEntry {
+                id: 0,
+                connection: config.id.clone(),
+                text: statement.to_owned(),
+                executed_at: now_ms(),
+                duration_ms: 0,
+                rows: None,
+                status: RunStatus::Unfinished,
+            })
+            .ok()
     }
 
     fn running(&self, rid: u64) -> Result<Arc<Running>> {
@@ -529,14 +567,14 @@ impl Runtime {
     pub async fn window(&self, rid: u64, set: usize, start: u64, count: usize) -> Result<Window> {
         let r = self.running(rid)?;
         let w = r.execution.window(set, start, count).await;
-        self.record(&r);
+        self.record(&r, false);
         w
     }
 
     /// How far a statement has got.
     pub fn status(&self, rid: u64) -> Result<ExecutionStatus> {
         let r = self.running(rid)?;
-        self.record(&r);
+        self.record(&r, false);
         Ok(r.execution.status())
     }
 
@@ -553,6 +591,7 @@ impl Runtime {
         {
             c.cancel().await?;
         }
+        r.cancelled.store(true, Ordering::Relaxed);
         r.execution.cancel();
         Ok(())
     }
@@ -566,43 +605,57 @@ impl Runtime {
             .remove(&rid)
         {
             r.execution.cancel();
-            self.record(&r);
+            self.record(&r, true);
         }
     }
 
-    /// Writes the history entry once the statement has finished.
-    fn record(&self, r: &Running) {
+    /// Forgets every result, completing their history entries; for when Treasury quits.
+    pub fn close_all(&self) {
+        let all: Vec<Arc<Running>> = self
+            .running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain()
+            .map(|(_, r)| r)
+            .collect();
+        for r in all {
+            r.execution.cancel();
+            self.record(&r, true);
+        }
+    }
+
+    /// Completes the statement's history entry once it has finished, or when its result is
+    /// closed: results are read only as far as they are shown, so a result can be closed before
+    /// its stream has ended.
+    fn record(&self, r: &Running, closing: bool) {
         let status = r.execution.status();
-        if !status.finished {
+        if !status.finished && !closing {
             return;
         }
-        let mut done = r.recorded.lock().unwrap_or_else(PoisonError::into_inner);
-        if *done
-            || !r.history
-            || self.store.setting::<bool>("history").ok().flatten() == Some(false)
-        {
+        let Some(id) = r
+            .history
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        else {
             return;
-        }
-        *done = true;
+        };
         let rows: Option<i64> = status
             .sets
             .iter()
             .map(|s| s.affected.unwrap_or(s.rows))
             .reduce(|a, b| a + b)
             .and_then(|n| i64::try_from(n).ok());
-        let _ = self.store.add_history(&HistoryEntry {
-            id: 0,
-            connection: r.connection.clone(),
-            text: r.text.clone(),
-            executed_at: now_ms() - i64::try_from(r.started.elapsed().as_millis()).unwrap_or(0),
-            duration_ms: i64::try_from(r.started.elapsed().as_millis()).unwrap_or(0),
-            rows,
-            status: match &status.error {
-                None => RunStatus::Ok,
-                Some(e) if e.kind == ErrorKind::Cancelled => RunStatus::Cancelled,
-                Some(_) => RunStatus::Failed,
-            },
-        });
+        let outcome = match &status.error {
+            Some(e) if e.kind == ErrorKind::Cancelled => RunStatus::Cancelled,
+            Some(_) => RunStatus::Failed,
+            None if r.cancelled.load(Ordering::Relaxed) => RunStatus::Cancelled,
+            None => RunStatus::Ok,
+        };
+        let ended = r.execution.last_event().unwrap_or_else(Instant::now);
+        let took = i64::try_from(ended.saturating_duration_since(r.started).as_millis())
+            .unwrap_or(i64::MAX);
+        let _ = self.store.finish_history(id, took, rows, outcome);
     }
 
     /// The count query for an UPDATE or DELETE, for showing before it runs.
