@@ -54,10 +54,30 @@ select {
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 code, .mono { font-family: var(--mono); font-size: 12px; }
 
-.app { display: grid; grid-template-columns: 260px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 24px; height: 100vh; }
+/* The hidden attribute wins over any display rule. */
+[hidden] { display: none !important; }
+
+.app { display: grid; grid-template-columns: var(--side, 300px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 24px; height: 100vh; }
 
 /* Sidebar */
-.sidebar { grid-row: 1; border-right: 1px solid var(--rule); background: var(--sheet); display: flex; flex-direction: column; min-height: 0; }
+.sidebar { grid-row: 1; position: relative; border-right: 1px solid var(--rule); background: var(--sheet); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+/* The sidebar's right edge, dragged to resize it. */
+.side-resize { position: absolute; top: 0; inset-inline-end: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 3; }
+.side-resize:hover, .side-resize.dragging { background: color-mix(in srgb, var(--green) 45%, transparent); }
+
+/* The database navigator: a toolbar, a filter, and every connection as a node of one tree. */
+.nav-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.nav-tools { align-items: center; }
+.nav-tools .push { margin-inline-start: auto; }
+.nav-filter { padding: 6px 12px; border-bottom: 1px solid var(--rule); }
+.nav-filter input { width: 100%; height: 26px; padding: 0 8px; border: 1px solid var(--rule-strong); border-radius: 4px; background-color: var(--paper); }
+.navigator .item.connection { padding-inline-start: 6px; }
+.navigator .item .twisty { cursor: default; text-align: center; }
+.navigator .item .twisty:hover { color: var(--ink); }
+.item.selected:not(.active) { background: var(--raised); box-shadow: inset 0 0 0 1px var(--rule-strong); }
+.navigator .tree .item.selected { background: var(--select); box-shadow: none; }
+.item.failed { color: var(--red); }
+.item.empty-node { font-style: italic; }
 .brand { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--rule); font-weight: 600; }
 .brand img { width: 20px; height: 20px; border-radius: 5px; }
 .brand .push { margin-inline-start: auto; font-weight: 400; }
@@ -121,8 +141,44 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .etab-title { min-width: 0; border: 0; background: none; padding: 3px 2px 3px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .etab-close, .etab-new { border: 0; background: none; padding: 2px 7px; color: var(--faint); }
 .etab-close:hover, .etab-new:hover { color: var(--ink); }
+.etab-kind { color: var(--green-ink); margin-inline-end: 5px; font-size: 11px; }
 .changed-dot { color: var(--amber); margin-inline-start: 5px; font-size: 9px; vertical-align: 1px; }
 .panes, .pane { display: grid; grid-template-rows: minmax(0, 1fr); min-height: 0; }
+
+/* An object editor: what the object is, Properties and Data, and the page shown. */
+.workspace.object-mode { grid-template-rows: auto auto minmax(0, 1fr); }
+.object-head { padding: 8px 12px 0; border-bottom: 1px solid var(--rule); background: var(--sheet); }
+.object-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.object-title .kind { font: 500 10.5px/1.7 var(--mono); padding: 0 6px; border-radius: 3px; border: 1px solid var(--rule-strong); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.object-title .object-name { font-size: 15px; }
+.object-title .where, .object-title .facts { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.object-tabs { display: flex; align-items: flex-end; gap: 2px; margin-top: 8px; }
+.object-tabs [role=tab] { border: 1px solid transparent; border-bottom: 0; background: none; padding: 4px 14px; border-radius: 4px 4px 0 0; }
+.object-tabs [role=tab].on { border-color: var(--rule); background: var(--paper); font-weight: 600; }
+.object-tabs .push { margin-inline-start: auto; }
+.object-tabs .object-refresh { margin-bottom: 5px; }
+.object-props { display: grid; grid-template-columns: 150px minmax(0, 1fr); min-height: 0; }
+.props-nav { display: flex; flex-direction: column; padding: 8px 0; border-inline-end: 1px solid var(--rule); background: var(--sheet); overflow: auto; }
+.props-nav button { border: 0; background: none; padding: 5px 14px; text-align: start; }
+.props-nav button:hover { background: var(--raised); }
+.props-nav button.on { background: var(--select); font-weight: 600; box-shadow: inset 3px 0 0 var(--green); }
+.props-body { min-height: 0; overflow: auto; background: var(--paper); }
+.props-table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 12.5px; }
+.props-table th { position: sticky; top: 0; background: var(--sheet); text-align: start; font: 500 11px/var(--row) var(--ui); padding: 0 10px; border-bottom: 1px solid var(--rule-strong); border-inline-end: 1px solid var(--rule); white-space: nowrap; }
+.props-table td { height: var(--row); padding: 0 10px; border-bottom: 1px solid var(--rule); border-inline-end: 1px solid var(--rule); white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+.props-table td.mono { font: 12px var(--mono); }
+.props-table td.num { text-align: end; color: var(--faint); width: 3em; }
+.props-table td.name { font-weight: 500; }
+.ddl-tools { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--rule); background: var(--sheet); position: sticky; top: 0; }
+.ddl-text { margin: 0; padding: 10px 12px; font: 12.5px/20px var(--mono); white-space: pre; }
+.facts-list { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 18px; margin: 0; padding: 14px 16px; }
+.facts-list dt { color: var(--muted); }
+.facts-list dd { margin: 0; overflow-wrap: anywhere; }
+
+/* A right-click menu. */
+.context-menu { position: fixed; z-index: 20; margin: 0; padding: 4px 0; list-style: none; min-width: 200px; background: var(--raised); border: 1px solid var(--rule-strong); border-radius: 6px; box-shadow: 0 6px 20px rgb(0 0 0 / 25%); }
+.context-menu button { display: block; width: 100%; border: 0; background: none; padding: 6px 14px; text-align: start; white-space: nowrap; }
+.context-menu button:hover, .context-menu button:focus-visible { background: var(--select); }
 .pane[hidden] { display: none; }
 .toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--rule); background: var(--sheet); }
 .toolbar .title { font-weight: 600; }

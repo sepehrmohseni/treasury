@@ -28,6 +28,13 @@ pub fn App() -> impl IntoView {
         if let Some(v) = get("tutorial_done").await.and_then(|v| v.as_bool()) {
             state.tutorial_done.set(v);
         }
+        if let Some(v) = get("side_width")
+            .await
+            .and_then(|v| v.as_u64())
+            .and_then(|v| u32::try_from(v.clamp(200, 640)).ok())
+        {
+            state.side_width.set(v);
+        }
         if let Some(v) = get("theme")
             .await
             .and_then(|v| v.as_str().map(str::to_owned))
@@ -64,13 +71,14 @@ pub fn App() -> impl IntoView {
     });
 
     view! {
-        <div class="app">
+        <div class="app" style:--side=move || format!("{}px", state.side_width.get())>
             <Sidebar />
             <Show when=move || state.active.get().is_some() fallback=|| view! { <Home /> }>
                 <Workspace />
             </Show>
             <StatusBar />
             <Dialogs />
+            <crate::navigator::ContextMenu />
         </div>
     }
 }

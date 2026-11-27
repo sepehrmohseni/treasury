@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use std::collections::{HashMap, HashSet};
 use treasury_core::config::{ConnectionConfig, ConnectionId};
 use treasury_core::exec::ExecutionStatus;
-use treasury_core::schema::ObjectPath;
+use treasury_core::schema::{ObjectNode, ObjectPath};
 use treasury_ipc::{
     AppFacts, CatalogView, ColumnView, ConnectionView, HostKeyQuestion, ImportPreview, LiveView,
     Prepared, RowEdits, SavedQueryView, UpdateView,
@@ -73,6 +73,35 @@ pub struct Tab {
     pub saved_query: Option<String>,
     /// Its place in the strip, kept by the app.
     pub position: u32,
+    /// The table, view or other object an object editor tab shows; `None` for a SQL editor.
+    /// Object editors hold no work of their own, so the app does not keep them.
+    pub object: Option<ObjectNode>,
+}
+
+/// What an object editor shows: its properties, one section at a time, or its rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ObjectPage {
+    Columns,
+    Indexes,
+    ForeignKeys,
+    Ddl,
+    Info,
+    Data,
+}
+
+/// A right-click menu, at a point of the window.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Menu {
+    pub x: f64,
+    pub y: f64,
+    pub target: MenuTarget,
+}
+
+/// What a right-click menu acts on.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MenuTarget {
+    Connection(ConnectionId),
+    Object(ConnectionId, ObjectNode),
 }
 
 /// Where a tab's statements put their results.
@@ -127,6 +156,9 @@ pub enum SideView {
     History,
 }
 
+/// The sidebar's width until it is dragged.
+pub const DEFAULT_SIDE_WIDTH: u32 = 300;
+
 /// Everything the components share.
 #[derive(Clone, Copy)]
 pub struct Ui {
@@ -176,9 +208,23 @@ pub struct Ui {
     pub saved: RwSignal<Option<u64>>,
     /// A newer release, found by the check at start.
     pub update: RwSignal<Option<UpdateView>>,
-    /// A tab title and statement for the workspace to open and run, such as the rows of a table
-    /// double-clicked in the tree.
+    /// A tab title and statement for the workspace to open and run, such as the value of a
+    /// Redis key double-clicked in the tree.
     pub open_rows: RwSignal<Option<(String, String)>>,
+    /// Connections expanded in the navigator.
+    pub expanded: RwSignal<HashSet<ConnectionId>>,
+    /// The node selected in the navigator: a connection (its root path) or an object.
+    pub selected: RwSignal<Option<(ConnectionId, ObjectPath)>>,
+    /// The right-click menu shown.
+    pub menu: RwSignal<Option<Menu>>,
+    /// Bumped to read a connection's tree again from the server.
+    pub tree_rev: RwSignal<HashMap<ConnectionId, u64>>,
+    /// What the navigator's filter box holds.
+    pub nav_filter: RwSignal<String>,
+    /// The page each object editor tab shows.
+    pub pages: RwSignal<HashMap<String, ObjectPage>>,
+    /// The sidebar's width in pixels.
+    pub side_width: RwSignal<u32>,
 }
 
 /// A statement the user confirmed in the guardrail dialog.
@@ -222,6 +268,13 @@ impl Ui {
             saved: RwSignal::new(None),
             update: RwSignal::new(None),
             open_rows: RwSignal::new(None),
+            expanded: RwSignal::new(HashSet::new()),
+            selected: RwSignal::new(None),
+            menu: RwSignal::new(None),
+            tree_rev: RwSignal::new(HashMap::new()),
+            nav_filter: RwSignal::new(String::new()),
+            pages: RwSignal::new(HashMap::new()),
+            side_width: RwSignal::new(DEFAULT_SIDE_WIDTH),
         }
     }
 
@@ -255,6 +308,18 @@ impl Ui {
     pub fn current_untracked(&self) -> Option<String> {
         let id = self.active.get_untracked()?;
         self.current_tab.with_untracked(|m| m.get(&id).cloned())
+    }
+
+    /// The tab with identifier `id`.
+    pub fn tab(&self, id: &str) -> Option<Tab> {
+        self.tabs.with(|t| t.iter().find(|t| t.id == id).cloned())
+    }
+
+    /// The object the shown tab is an editor of, if it is an object editor.
+    pub fn current_object(&self) -> Option<ObjectNode> {
+        let id = self.current()?;
+        self.tabs
+            .with(|t| t.iter().find(|t| t.id == id).and_then(|t| t.object.clone()))
     }
 
     /// Says that the history may have changed, so the history list reads it again.

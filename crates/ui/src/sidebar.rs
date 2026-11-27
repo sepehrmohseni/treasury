@@ -1,14 +1,13 @@
-//! Saved connections and, under the open one, its objects.
+//! The sidebar: the database navigator, saved queries and history, and opening connections.
 
 use crate::ipc;
 use crate::state::{Dialog, SideView, ui};
 use crate::tabs;
 use leptos::prelude::*;
 use treasury_core::config::{ConnectionConfig, ConnectionId, Engine, Environment};
-use treasury_core::schema::{ChildPage, ChildQuery, ObjectNode, ObjectPath};
 use treasury_ipc::{ImportPreview, LiveView, SavedQueryView};
 
-fn env_class(e: Environment) -> &'static str {
+pub fn env_class(e: Environment) -> &'static str {
     match e {
         Environment::Local => "env env-local",
         Environment::Development => "env env-development",
@@ -58,10 +57,16 @@ pub fn import_connections() {
     });
 }
 
-/// Makes connection `id` the active one, and opens it unless it is open or opening.
+/// Makes connection `id` the active one and expands it in the navigator, and opens it unless
+/// it is open or opening.
 pub fn open(id: ConnectionId) {
     let state = ui();
     state.active.set(Some(id.clone()));
+    if !state.expanded.with_untracked(|e| e.contains(&id)) {
+        state.expanded.update(|e| {
+            e.insert(id.clone());
+        });
+    }
     if state.live.with(|m| m.contains_key(&id)) || state.connecting.with(|c| c.contains(&id)) {
         return;
     }
@@ -98,14 +103,14 @@ pub fn connect(id: ConnectionId) {
 
 /// How a connection stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Link {
+pub enum Link {
     Open,
     Opening,
     Failed,
     Closed,
 }
 
-fn link_of(id: &ConnectionId) -> Link {
+pub fn link_of(id: &ConnectionId) -> Link {
     let state = ui();
     if state.live.with(|m| m.contains_key(id)) {
         Link::Open
@@ -120,7 +125,7 @@ fn link_of(id: &ConnectionId) -> Link {
 
 impl Link {
     /// The marker's class and what it says.
-    fn marker(self) -> (&'static str, &'static str) {
+    pub fn marker(self) -> (&'static str, &'static str) {
         match self {
             Link::Open => ("link link-open", "Connected"),
             Link::Opening => ("link link-opening", "Connecting"),
@@ -139,14 +144,10 @@ pub fn Sidebar() -> impl IntoView {
                 <img src="icon.svg" alt="" />"Treasury"
                 <button class="btn small push settings" on:click=move |_| state.dialog.set(Dialog::Settings)>"Settings"</button>
             </div>
-            <div class="side-actions">
-                <button class="btn small primary" on:click=move |_| add_connection()>"Add"</button>
-                <button class="btn small" on:click=move |_| import_connections()>"Import"</button>
-            </div>
             <div class="side-views" role="tablist" aria-label="Sidebar">
                 <button role="tab" class="view-connections" class:on=move || state.side_view.get() == SideView::Connections
                     aria-selected=move || (state.side_view.get() == SideView::Connections).to_string()
-                    on:click=move |_| state.side_view.set(SideView::Connections)>"Connections"</button>
+                    on:click=move |_| state.side_view.set(SideView::Connections)>"Navigator"</button>
                 <button role="tab" class="view-queries" class:on=move || state.side_view.get() == SideView::Queries
                     aria-selected=move || (state.side_view.get() == SideView::Queries).to_string()
                     on:click=move |_| state.side_view.set(SideView::Queries)>"Queries"</button>
@@ -160,179 +161,44 @@ pub fn Sidebar() -> impl IntoView {
             <Show when=move || state.side_view.get() == SideView::History>
                 <crate::history::HistoryPanel />
             </Show>
-            <div class="list" hidden=move || state.side_view.get() != SideView::Connections>
-                <div class="side-section">"Connections"</div>
-                <For
-                    each=move || state.connections.get()
-                    key=|c| c.config.id.clone()
-                    children=move |c| {
-                        let id = c.config.id.clone();
-                        let id_view = id.clone();
-                        let edit = c.config.clone();
-                        let active = Memo::new({
-                            let id = id.clone();
-                            move |_| state.active.get().as_ref() == Some(&id)
-                        });
-                        // Changes only when this connection's state does, so its open tree is
-                        // kept while others connect.
-                        let link = Memo::new({
-                            let id = id.clone();
-                            move |_| link_of(&id)
-                        });
-                        view! {
-                            <button
-                                class="item connection"
-                                class:active=move || active.get()
-                                aria-current=move || active.get().then_some("true")
-                                on:click=move |_| open(id.clone())
-                                on:dblclick=move |_| state.dialog.set(Dialog::Connection(Box::new(edit.clone())))
-                                title="Open; double-click to edit"
-                            >
-                                {move || {
-                                    let (class, label) = link.get().marker();
-                                    view! { <span class=class title=label><span class="visually-hidden">{label}</span></span> }
-                                }}
-                                <span class="name">{c.config.name.clone()}</span>
-                                <span class=env_class(c.config.environment)>{env_label(c.config.environment)}</span>
-                            </button>
-                            <Show when=move || active.get()>
-                                {
-                                    let id = id_view.clone();
-                                    move || {
-                                        let retry = id.clone();
-                                        match link.get() {
-                                            Link::Open => view! {
-                                                <div class="tree" role="tree">
-                                                    <TreeLevel connection=id.clone() path=ObjectPath::root() depth=0 />
-                                                </div>
-                                            }.into_any(),
-                                            Link::Opening => view! {
-                                                <div class="item detail conn-state">"Connecting…"</div>
-                                            }.into_any(),
-                                            Link::Failed => view! {
-                                                <div class="item conn-state failed">
-                                                    <span>"Could not connect"</span>
-                                                    <button class="btn small retry" on:click=move |_| connect(retry.clone())>"Try again"</button>
-                                                </div>
-                                            }.into_any(),
-                                            Link::Closed => view! {
-                                                <div class="item conn-state">
-                                                    <span class="detail">"Not connected"</span>
-                                                    <button class="btn small" on:click=move |_| connect(retry.clone())>"Connect"</button>
-                                                </div>
-                                            }.into_any(),
-                                        }
-                                    }
-                                }
-                            </Show>
-                        }
-                    }
-                />
+            <div class="nav-pane" hidden=move || state.side_view.get() != SideView::Connections>
+                <crate::navigator::Navigator />
             </div>
+            <SideResize />
         </aside>
     }
 }
 
-/// The children of `path`, loaded when shown, with a "More" row for further pages.
+/// The sidebar's right edge, dragged to make it wider or narrower.
 #[component]
-fn TreeLevel(connection: ConnectionId, path: ObjectPath, depth: usize) -> impl IntoView {
+fn SideResize() -> impl IntoView {
     let state = ui();
-    let nodes = RwSignal::new(Vec::<ObjectNode>::new());
-    let next = RwSignal::new(None::<String>);
-    let failed = RwSignal::new(None::<String>);
-    let load = {
-        let connection = connection.clone();
-        let path = path.clone();
-        move |cursor: Option<String>| {
-            let connection = connection.clone();
-            let path = path.clone();
-            leptos::task::spawn_local(async move {
-                let query = ChildQuery {
-                    filter: None,
-                    cursor,
-                    limit: 200,
-                };
-                match ipc::call::<_, ChildPage>(
-                    "children",
-                    &serde_json::json!({ "id": connection, "path": path, "query": query }),
-                )
-                .await
-                {
-                    Ok(page) => {
-                        nodes.update(|n| n.extend(page.nodes));
-                        next.set(page.next_cursor);
-                    }
-                    Err(e) => failed.set(Some(e.to_string())),
-                }
-            });
+    let dragging = RwSignal::new(false);
+    let _ = window_event_listener(leptos::ev::mousemove, move |ev| {
+        if dragging.get_untracked() {
+            let w = u32::try_from(ev.client_x().clamp(200, 640))
+                .unwrap_or(crate::state::DEFAULT_SIDE_WIDTH);
+            state.side_width.set(w);
         }
-    };
-    load(None);
-    let more = load.clone();
-    let _ = state;
-    view! {
-        <For
-            each=move || nodes.get()
-            key=|n| n.path.clone()
-            children={
-                let connection = connection.clone();
-                move |n| view! { <TreeNode connection=connection.clone() node=n depth=depth /> }
-            }
-        />
-        {move || next.get().map(|c| {
-            let more = more.clone();
-            view! {
-                <button class="item" style:padding-inline-start=format!("{}px", 12 + (depth + 1) * 14)
-                    on:click=move |_| more(Some(c.clone()))>"More…"</button>
-            }
-        })}
-        {move || failed.get().map(|e| view! { <div class="item detail" title=e.clone()>"Could not load"</div> })}
-    }
-}
-
-#[component]
-fn TreeNode(connection: ConnectionId, node: ObjectNode, depth: usize) -> impl IntoView {
-    let state = ui();
-    let open = RwSignal::new(false);
-    let expandable = node.expandable;
-    let path = node.path.clone();
-    let browse = node.clone();
-    let show_rows = move |_| {
-        if let Some(statement) = state
-            .active_config()
-            .and_then(|c| crate::editor::browse_statement(&c, &browse))
-        {
-            // A Redis key's tab is named by the whole key, not its last segment.
-            let title = match browse.kind {
-                treasury_core::schema::ObjectKind::Key => browse
-                    .path
-                    .leaf()
-                    .map_or_else(|| browse.name.clone(), |l| l.name.clone()),
-                _ => browse.name.clone(),
-            };
-            state.open_rows.set(Some((title, statement)));
+    });
+    let _ = window_event_listener(leptos::ev::mouseup, move |_| {
+        if dragging.get_untracked() {
+            dragging.set(false);
+            crate::home::set_setting(
+                "side_width",
+                serde_json::Value::from(state.side_width.get_untracked()),
+            );
         }
-    };
+    });
     view! {
-        <button
-            class="item"
-            role="treeitem"
-            aria-expanded=move || expandable.then(|| open.get().to_string())
-            style:padding-inline-start=format!("{}px", 12 + depth * 14)
-            on:click=move |_| if expandable { open.update(|o| *o = !*o) }
-            on:dblclick=show_rows
-        >
-            <span class="twisty">{move || if !expandable { " " } else if open.get() { "▾" } else { "▸" }}</span>
-            <span>{node.name.clone()}</span>
-            {node.detail.clone().map(|d| view! { <span class="detail">{d}</span> })}
-        </button>
-        <Show when=move || open.get()>
-            {
-                let connection = connection.clone();
-                let path = path.clone();
-                move || view! { <TreeLevel connection=connection.clone() path=path.clone() depth=depth + 1 /> }.into_any()
-            }
-        </Show>
+        <div class="side-resize" role="separator" aria-orientation="vertical" aria-label="Sidebar width"
+            title="Drag to resize; double-click to reset"
+            class:dragging=move || dragging.get()
+            on:mousedown=move |ev| { ev.prevent_default(); dragging.set(true); }
+            on:dblclick=move |_| {
+                state.side_width.set(crate::state::DEFAULT_SIDE_WIDTH);
+                crate::home::set_setting("side_width", serde_json::Value::from(crate::state::DEFAULT_SIDE_WIDTH));
+            }></div>
     }
 }
 

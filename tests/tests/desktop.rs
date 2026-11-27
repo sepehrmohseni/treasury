@@ -231,16 +231,41 @@ mod desktop {
         s.wait_text(".statusbar", "Saved. 1 row changed.", 30);
         s.wait_text(&shown(".grid table"), "seven", 30);
 
-        // The tree: a table double-clicked shows its rows, in a tab of its own.
+        // The navigator: the connection is a node of the tree, expanded once it opened, with
+        // its schemas and their objects under it.
+        s.wait(".navigator .item.connection.active[aria-expanded=true]", 10);
         s.click(&s.wait_item(".tree .item", "public", 10));
         s.click(&s.wait_item(".tree .item", "Tables", 10));
         let table = s.wait_item(".tree .item", "smoke", 10);
+        // A double-click opens the table's editor at its columns.
         s.double_click(&table);
         s.wait_text(".tab-strip .etab.on", "smoke", 10);
-        s.wait_text(".editor pre", "SELECT * FROM", 10);
-        s.wait_text(&shown(".grid table"), "deux", 30);
-        assert_eq!(tab_count(&s), 2);
+        s.wait_text(".object-title", "in public", 10);
+        let columns = s.wait_text(".object-props .columns-table", "name", 30);
+        assert!(
+            columns.contains("integer") && columns.contains("text") && columns.contains("PK"),
+            "{columns}"
+        );
+        s.click_css(".props-nav .s-indexes");
+        s.wait_text(".object-props .indexes-table", "smoke_pkey", 30);
+        s.click_css(".props-nav .s-ddl");
+        s.wait_text(".object-props .ddl-text", "CREATE TABLE", 30);
         shot("8-tree");
+        // Its rows, from the right-click menu, in the grid that edits them.
+        s.script_on(
+            &s.wait_item(".tree .item", "smoke", 10),
+            "arguments[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 120, clientY: 300 }))",
+        );
+        s.click_css(".context-menu .m-data");
+        assert!(s.find(".context-menu").is_none());
+        s.wait(".object-tabs .data-tab.on", 10);
+        s.wait_text(&shown(".grid table"), "deux", 30);
+        s.wait_text(&shown(".result-foot .edit-state"), "can be edited", 30);
+        assert_eq!(tab_count(&s), 2);
+        shot("8b-table-data");
+        // Properties again, then back to the SQL editor, which kept its text.
+        s.click_css(".object-tabs .props-tab");
+        s.wait(".object-props .props-nav", 10);
 
         // Tabs: each keeps its text and its result while another is shown.
         s.click_css(".tab-strip .etab-new");
@@ -519,9 +544,19 @@ mod desktop {
         );
         // With connections saved, the first screen says where to start.
         s.wait_text(".home h1", "Open a connection", 10);
+        // Collapse folds every connection; a click opens one again with its tree.
+        s.click_css(".nav-tools .nav-collapse");
+        assert!(s.find(".navigator .tree").is_none());
+        s.click(&s.wait_item(".navigator > .item", "smoke-prod", 10));
+        s.wait_item(".navigator .tree .item", "public", 30);
 
-        // Deleting a connection asks first.
-        s.double_click(&s.wait_item(".list > .item", "via-ssh", 10));
+        // Deleting a connection asks first; the right-click menu edits it.
+        s.script_on(
+            &s.wait_item(".navigator > .item", "via-ssh", 10),
+            "arguments[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 200 }))",
+        );
+        s.click_css(".context-menu .m-edit");
+        s.wait_text(".dialog header", "Edit connection", 10);
         s.click_css(".dialog .delete-connection");
         s.wait_text(".dialog", "cannot be undone", 10);
         s.click_css(".dialog .confirm-delete");
@@ -625,7 +660,11 @@ mod desktop {
         s.click(&name);
         s.keys(&name, "grid-cluster");
         s.click(&s.wait_item(".dialog footer .btn", "Save", 10));
-        s.double_click(&s.wait_item(".list > .item", "grid-cluster", 10));
+        s.script_on(
+            &s.wait_item(".navigator > .item", "grid-cluster", 10),
+            "arguments[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 80, clientY: 200 }))",
+        );
+        s.click_css(".context-menu .m-edit");
         s.wait("#cf-sentinels", 10);
         assert_eq!(
             s.script(
@@ -681,6 +720,11 @@ mod desktop {
 
         // After a restart: the password came back from the keychain, and the tabs with their
         // text, the saved query and the draft among them.
+        // Nothing in the interface failed along the way.
+        assert_eq!(
+            s.script("return window.__startupErrors"),
+            serde_json::json!([])
+        );
         drop(s);
         assert!(saved_connection(&data), "the connection was not saved");
         let s = driver.session(&app);
@@ -693,9 +737,11 @@ mod desktop {
         s.click(&s.wait_item(".list > .item", "smoke", 30));
         s.wait_text(".statusbar", "PostgreSQL", 60);
         let strip = s.wait_text(".tab-strip", "Second tab", 30);
-        for title in ["Query 1", "smoke", "Query 2", "Query 3", "script_t"] {
+        for title in ["Query 1", "Query 2", "Query 3", "script_t"] {
             assert!(strip.contains(title), "{strip}");
         }
+        // A table's editor holds no work of its own, so it is not brought back.
+        assert!(!strip.contains("smoke"), "{strip}");
         s.click(&s.wait_item(".tab-strip .etab-title", "Query 2", 10));
         s.wait_text(".editor pre", "SELECT 'draft'", 10);
         run(&s, "SELECT count(*) AS n FROM smoke");
@@ -709,6 +755,10 @@ mod desktop {
         s.click_css(".dialog .btn.danger");
         s.wait_text(".statusbar", "Cleared the history of \"smoke\"", 10);
         s.wait_text(".list.history", "No statements have run", 10);
+        assert_eq!(
+            s.script("return window.__startupErrors"),
+            serde_json::json!([])
+        );
         drop(s);
         drop(driver);
     }

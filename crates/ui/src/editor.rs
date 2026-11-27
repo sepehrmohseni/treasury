@@ -246,7 +246,7 @@ fn class_of(k: SpanKind) -> &'static str {
 }
 
 /// The highlighted copy of the text behind the textarea.
-fn highlighted(dialect: Option<SqlDialect>, text: &str) -> AnyView {
+pub fn highlighted(dialect: Option<SqlDialect>, text: &str) -> AnyView {
     let Some(d) = dialect else {
         return view! { {format!("{text}\n")} }.into_any();
     };
@@ -644,6 +644,15 @@ pub fn Workspace() -> impl IntoView {
             .unwrap_or_default()
     };
     let output = move || current().and_then(|t| state.outputs.with(|m| m.get(&t).copied()));
+    // The shown tab is an object editor rather than a SQL editor.
+    let object_mode = Memo::new(move |_| state.current_object().is_some());
+    let data_page = move || {
+        current().is_some_and(|t| {
+            state
+                .pages
+                .with(|m| m.get(&t) == Some(&crate::state::ObjectPage::Data))
+        })
+    };
 
     // The active connection always has a tab to show.
     Effect::new(move |_| tabs::ensure_tab());
@@ -944,6 +953,7 @@ pub fn Workspace() -> impl IntoView {
     view! {
         <main
             class="workspace"
+            class:object-mode=move || object_mode.get()
             class:production-strip=move || config().is_some_and(|c| c.environment == Environment::Production)
         >
             <div>
@@ -961,23 +971,23 @@ pub fn Workspace() -> impl IntoView {
                         }}</span> }.into_any()
                     })}
                     <span class="spacer"></span>
-                    <label class="detail"><input type="checkbox" prop:checked=move || limit.get()
+                    <label class="detail" hidden=move || object_mode.get()><input type="checkbox" prop:checked=move || limit.get()
                         on:change=move |ev| limit.set(event_target_checked(&ev)) />" Limit"</label>
                     {move || live().filter(|_| config().is_some_and(|c| c.read_only || c.environment == Environment::Production)).map(|l| view! {
                         <button class="btn small" on:click=toggle_writes>
                             {if l.read_only { "Unlock writes" } else { "Lock writes" }}
                         </button>
                     })}
-                    <button class="btn small format" on:click=move |_| format_text()
+                    <button class="btn small format" hidden=move || object_mode.get() on:click=move |_| format_text()
                         disabled=move || current().is_none() title="Shift+Alt+F">"Format"</button>
-                    <button class="btn small save-query" on:click=move |_| tabs::save_current()
+                    <button class="btn small save-query" hidden=move || object_mode.get() on:click=move |_| tabs::save_current()
                         disabled=move || current().is_none() title="Ctrl+S">"Save query"</button>
                     <button class="btn small" on:click=cancel
                         disabled=move || output().is_none_or(|o| o.results.with(Vec::is_empty))>"Cancel"</button>
-                    <button class="btn small run-all" on:click=move |_| run_everything()
+                    <button class="btn small run-all" hidden=move || object_mode.get() on:click=move |_| run_everything()
                         disabled=move || live().is_none()
                         title=move || if live().is_some() { "Shift+Ctrl+Enter" } else { "Connect first" }>"Run all"</button>
-                    <button class="btn small primary" on:click=move |_| run_current()
+                    <button class="btn small primary" hidden=move || object_mode.get() on:click=move |_| run_current()
                         disabled=move || live().is_none()
                         title=move || if live().is_some() { "Ctrl+Enter" } else { "Connect first" }>"Run"</button>
                 </div>
@@ -996,7 +1006,7 @@ pub fn Workspace() -> impl IntoView {
                 </Show>
                 <TabStrip />
             </div>
-            <div class="editor">
+            <div class="editor" hidden=move || object_mode.get()>
                 <pre aria-hidden="true">{move || highlighted(dialect(), &text())}</pre>
                 <div class="caret-probe" node_ref=probe aria-hidden="true"></div>
                 {move || popup.get().map(|p| view! {
@@ -1091,7 +1101,8 @@ pub fn Workspace() -> impl IntoView {
                     }
                 ></textarea>
             </div>
-            <div class="panes">
+            <crate::objects::ObjectHeader />
+            <div class="panes" hidden=move || object_mode.get() && !data_page()>
                 // Every tab keeps its result, and its unsaved grid edits, while another is shown.
                 <For
                     each=move || state.tabs.get()
@@ -1114,6 +1125,7 @@ pub fn Workspace() -> impl IntoView {
                     }
                 />
             </div>
+            <crate::objects::ObjectProps />
         </main>
     }
 }
@@ -1213,12 +1225,14 @@ fn TabStrip() -> impl IntoView {
                     };
                     let label = title.clone();
                     let hover = title.clone();
+                    let object = state.tab(&id).is_some_and(|t| t.object.is_some());
                     view! {
-                        <div class="etab" class:on=move || state.current().as_ref() == Some(&on)>
+                        <div class="etab" class:object=object class:on=move || state.current().as_ref() == Some(&on)>
                             <button class="etab-title" role="tab"
                                 aria-selected=move || (state.current().as_ref() == Some(&id)).to_string()
                                 title=hover
                                 on:click=move |_| tabs::show(show.clone())>
+                                {object.then(|| view! { <span class="etab-kind" aria-hidden="true">"▦"</span> })}
                                 {title}
                                 <Show when=changed.clone()>
                                     <span class="changed-dot" title="Changed since it was saved" aria-label="changed">"●"</span>

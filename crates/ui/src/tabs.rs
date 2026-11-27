@@ -3,12 +3,13 @@
 //! saving it again updates that query.
 
 use crate::ipc;
-use crate::state::{Dialog, Output, Tab, ui};
+use crate::state::{Dialog, ObjectPage, Output, Tab, ui};
 use leptos::prelude::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use treasury_core::config::ConnectionId;
+use treasury_core::schema::ObjectNode;
 use treasury_ipc::{SavedQueryView, TabView, new_tab_title};
 
 /// How long typing pauses before the tab is kept.
@@ -52,6 +53,7 @@ fn add(view: TabView, position: u32) {
             title: view.title,
             saved_query: view.saved_query,
             position,
+            object: None,
         });
     });
 }
@@ -123,6 +125,67 @@ pub async fn open(
             None
         }
     }
+}
+
+thread_local! {
+    /// Numbers object editor tabs, which the app does not keep.
+    static OBJECT_TABS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Opens the editor of `node` on `connection` at `page`, or shows the one already open there,
+/// and makes `connection` the active one.
+pub fn open_object(connection: ConnectionId, node: ObjectNode, page: ObjectPage) {
+    // A task runs with no component owning it, so the tab's result signals outlive the tree row
+    // that was clicked; collapsing the tree must not take them with it.
+    leptos::task::spawn_local(async move { open_object_now(connection, node, page) });
+}
+
+fn open_object_now(connection: ConnectionId, node: ObjectNode, page: ObjectPage) {
+    let state = ui();
+    state.active.set(Some(connection.clone()));
+    let open = state.tabs.with_untracked(|t| {
+        t.iter()
+            .find(|t| {
+                t.connection == connection && t.object.as_ref().is_some_and(|o| o.path == node.path)
+            })
+            .map(|t| t.id.clone())
+    });
+    let id = match open {
+        Some(id) => id,
+        None => {
+            let n = OBJECT_TABS.with(|c| {
+                c.set(c.get() + 1);
+                c.get()
+            });
+            let id = format!("object-{n}");
+            let position = state
+                .tabs
+                .with_untracked(|t| t.iter().map(|t| t.position + 1).max().unwrap_or(0));
+            state.outputs.update(|m| {
+                m.insert(id.clone(), Output::new());
+            });
+            state.tabs.update(|t| {
+                t.push(Tab {
+                    id: id.clone(),
+                    connection: connection.clone(),
+                    title: node.name.clone(),
+                    saved_query: None,
+                    position,
+                    object: Some(node),
+                });
+            });
+            id
+        }
+    };
+    state.pages.update(|m| {
+        m.insert(id.clone(), page);
+    });
+    show(id);
+}
+
+/// Whether tab `id` is an object editor.
+fn is_object(id: &str) -> bool {
+    tab(id).is_some_and(|t| t.object.is_some())
 }
 
 /// A new, empty tab on the active connection.
@@ -225,7 +288,7 @@ pub fn set_cursor(id: &str, at: u32) {
 /// Has the app keep tab `id` as it is now.
 pub fn keep(id: &str) {
     let state = ui();
-    let Some(t) = tab(id) else {
+    let Some(t) = tab(id).filter(|t| t.object.is_none()) else {
         return;
     };
     let view = TabView {
@@ -287,6 +350,7 @@ pub fn close(id: String) {
     let Some(t) = tab(&id) else {
         return;
     };
+    let object = t.object.is_some();
     let siblings: Vec<String> = state.tabs.with_untracked(|all| {
         all.iter()
             .filter(|x| x.connection == t.connection)
@@ -328,6 +392,13 @@ pub fn close(id: String) {
             }
         });
     }
+    state.pages.update(|m| {
+        m.remove(&id);
+    });
+    if object {
+        crate::objects::forget(&id);
+        return;
+    }
     leptos::task::spawn_local(async move {
         if let Err(e) = ipc::call::<_, ()>("close_tab", &serde_json::json!({ "id": id })).await {
             state.notice.set(Some(e.to_string()));
@@ -367,7 +438,7 @@ pub fn open_saved(q: SavedQueryView) {
 /// name.
 pub fn save_current() {
     let state = ui();
-    let Some(id) = state.current_untracked() else {
+    let Some(id) = state.current_untracked().filter(|id| !is_object(id)) else {
         return;
     };
     let query = tab(&id).and_then(|t| t.saved_query).and_then(|q| {

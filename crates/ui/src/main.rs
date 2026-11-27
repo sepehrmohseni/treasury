@@ -11,6 +11,8 @@ mod grid;
 mod history;
 mod home;
 mod ipc;
+mod navigator;
+mod objects;
 mod palette;
 mod sidebar;
 mod state;
