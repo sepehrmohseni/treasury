@@ -14,8 +14,8 @@ Ideas and requests are welcome as [issues](https://github.com/sepehrmohseni/trea
 - Saved queries in folders.
 - The query history in a panel, searchable. History is already recorded and encrypted; this is
   the view of it.
-- A settings screen: theme, density, font size, default row limit, history. The first-launch
-  walkthrough and the tips can already be turned off.
+- Density and font size in Settings. Theme, the default row limit, history, tips, the
+  walkthrough and the version check are already there.
 - A command palette (Ctrl+K) for connections, tables and settings.
 - Completion of table and column names, formatting, run all statements.
 - An inspector for the selected row or object, with its DDL.
