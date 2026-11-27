@@ -2,8 +2,9 @@ name: Release
 
 # Runs on a version tag made by `cargo xtask release <version>`. It checks the tag against the
 # manifests, runs every CI check, builds and signs the desktop packages on each platform, and
-# publishes one release with all of them, their checksums, an SBOM and the updater feed. A last
-# job downloads the published release and checks it.
+# publishes one release with all of them, their checksums, an SBOM and the updater feed. Then a
+# job downloads the published release and checks it, and the last one rebuilds the project
+# page so its downloads point at the new release.
 #
 # A push to main that changes how releases are built runs the package builds alone, as a dry
 # run: nothing is signed or published, and the packages stay with the run for a week.
@@ -234,3 +235,19 @@ jobs:
           done
           latest="$(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json" | jq -r .version)"
           test "$latest" = "${GITHUB_REF_NAME#v}"
+
+  pages:
+    name: update the project page
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      # The page lists the latest release's downloads. A release published with GITHUB_TOKEN
+      # starts no workflows by itself, but a workflow_dispatch does; it runs on main, the
+      # branch the Pages environment deploys from.
+      - name: Rebuild the page with the new downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main

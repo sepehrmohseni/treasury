@@ -8,6 +8,8 @@ on:
       - docs/**
       - scripts/site-downloads.py
       - .github/workflows/pages.yml
+  # For releases published by hand. The release workflow publishes with GITHUB_TOKEN, whose
+  # events start no workflows, so its last job asks for this one through workflow_dispatch.
   release:
     types: [published]
   workflow_dispatch:
