@@ -150,13 +150,14 @@ jobs:
         with:
           toolchain: "1.100.0"
           targets: wasm32-unknown-unknown
-      - name: Install the desktop libraries, WebKitWebDriver and Xvfb
+      # GNOME Keyring on a session bus of the test's own keeps the app's keys, as on a desktop.
+      - name: Install the desktop libraries, WebKitWebDriver, Xvfb and GNOME Keyring
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev \
             libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev libxdo-dev webkit2gtk-driver xvfb libgl1-mesa-dri libegl1 libgbm1 \
-            fonts-dejavu-core
+            fonts-dejavu-core gnome-keyring dbus-daemon dbus-session-bus-common
       - name: Install wasm-opt (binaryen, pinned)
         shell: bash
         run: |

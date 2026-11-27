@@ -275,6 +275,11 @@ fn desktop(root: &Path) -> Result<Outcome> {
     if !docker_available() {
         return Ok(Outcome::Skipped("Docker is not available".into()));
     }
+    for tool in ["dbus-daemon", "dbus-send", "gnome-keyring-daemon"] {
+        if !on_path(tool) {
+            return Ok(Outcome::Skipped(format!("{tool} is not installed")));
+        }
+    }
 
     // The app with its interface built in, as a release has it, but with debug code generation.
     run::status(&mut cmd(
@@ -326,12 +331,131 @@ fn desktop(root: &Path) -> Result<Outcome> {
         std::thread::sleep(std::time::Duration::from_secs(1));
         test.env("DISPLAY", display);
     }
+    let keyring = Keyring::start()?;
+    test.env("DBUS_SESSION_BUS_ADDRESS", &keyring.address);
     let result = run::status(&mut test);
+    drop(keyring);
     if let Some(mut x) = xvfb {
         let _ = x.kill();
         let _ = x.wait();
     }
     result.map(|()| Outcome::Passed)
+}
+
+/// A session bus of its own with an unlocked GNOME Keyring on it, for the app to keep its keys
+/// in as it does on a desktop, so the test can restart the app and find its tabs and history.
+/// The private bus keeps the test away from any keyring the machine's own desktop has.
+struct Keyring {
+    dir: PathBuf,
+    address: String,
+    bus: std::process::Child,
+    daemon: std::process::Child,
+}
+
+impl Keyring {
+    fn start() -> Result<Self> {
+        use std::process::{Command, Stdio};
+
+        let dir = std::env::temp_dir().join(format!("treasury-keyring-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let runtime = dir.join("run");
+        std::fs::create_dir_all(&runtime)?;
+        std::fs::create_dir_all(dir.join("data"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let socket = dir.join("bus");
+        let address = format!("unix:path={}", socket.display());
+        let mut bus = Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--nopidfile"])
+            .arg(format!("--address={address}"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        match Self::daemon(&dir, &socket, &address) {
+            Ok(daemon) => Ok(Self {
+                dir,
+                address,
+                bus,
+                daemon,
+            }),
+            Err(e) => {
+                let _ = bus.kill();
+                let _ = bus.wait();
+                let _ = std::fs::remove_dir_all(&dir);
+                Err(e)
+            }
+        }
+    }
+
+    /// Starts gnome-keyring on the bus at `address` and waits for its Secret Service.
+    fn daemon(dir: &Path, socket: &Path, address: &str) -> Result<std::process::Child> {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        use std::time::Duration;
+
+        if !wait_for(Duration::from_secs(10), || socket.exists()) {
+            bail!("the session bus did not start");
+        }
+        let mut child = Command::new("gnome-keyring-daemon")
+            .args(["--foreground", "--unlock", "--components=secrets"])
+            .env("DBUS_SESSION_BUS_ADDRESS", address)
+            .env("XDG_RUNTIME_DIR", dir.join("run"))
+            .env("XDG_DATA_HOME", dir.join("data"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        // The password of this throwaway keyring, which only ever holds the test's keys. With an
+        // empty one, gnome-keyring creates no login keyring to keep them in.
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(b"treasury-desktop-test")?;
+        }
+        let ready = wait_for(Duration::from_secs(15), || {
+            Command::new("dbus-send")
+                .env("DBUS_SESSION_BUS_ADDRESS", address)
+                .args([
+                    "--session",
+                    "--print-reply",
+                    "--dest=org.freedesktop.DBus",
+                    "/org/freedesktop/DBus",
+                    "org.freedesktop.DBus.NameHasOwner",
+                    "string:org.freedesktop.secrets",
+                ])
+                .output()
+                .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("boolean true"))
+        });
+        if !ready {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("gnome-keyring did not start its Secret Service");
+        }
+        Ok(child)
+    }
+}
+
+impl Drop for Keyring {
+    fn drop(&mut self) {
+        for child in [&mut self.daemon, &mut self.bus] {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Whether `ready` turns true within `limit`, asking every 100 ms.
+fn wait_for(limit: std::time::Duration, mut ready: impl FnMut() -> bool) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < limit {
+        if ready() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
 }
 
 /// Whether `program` is in a directory on `PATH`.

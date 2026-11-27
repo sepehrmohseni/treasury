@@ -121,6 +121,13 @@ COPY install-binaryen.sh /usr/local/lib/treasury/install-binaryen.sh
 RUN /usr/local/lib/treasury/install-binaryen.sh /usr/local/binaryen \
  && ln -s /usr/local/binaryen/bin/wasm-opt /usr/local/bin/wasm-opt
 
+# GNOME Keyring on a session bus of its own keeps the app's keys in the desktop test, as on a
+# desktop (see the desktop step of `cargo xtask ci`). A layer of its own, so adding it did not
+# rebuild the tools above.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gnome-keyring dbus-daemon dbus-session-bus-common \
+ && rm -rf /var/lib/apt/lists/*
+
 # The container runs as the caller's own user id, so caches and the account file must be
 # writable by any id. The caches live in named volumes created from these directories.
 RUN mkdir -p /cache/cargo /cache/target /cache/pnpm /cache/home /work \
