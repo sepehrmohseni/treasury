@@ -508,6 +508,21 @@ mod desktop {
         s.wait_text(".editor pre", "HGETALL user:1", 10);
         s.wait_text(&shown(".grid table"), "rust", 30);
 
+        // A hash's value edited in the grid becomes HSET, read before it runs.
+        s.double_click(&s.wait_item(&shown(".grid td"), "rust", 10));
+        let input = s.wait(".cell-input", 10);
+        s.script_on(
+            &input,
+            "arguments[0].value = 'go'; \
+             arguments[0].dispatchEvent(new Event('input', { bubbles: true }))",
+        );
+        s.keys(&input, &key::ENTER.to_string());
+        s.click_css(&shown(".result-foot .btn.primary"));
+        s.wait_text(".dialog .statements", "HSET user:1 lang go", 30);
+        s.click_css(".dialog .btn.primary");
+        s.wait_text(".statusbar", "Saved. 1 row changed.", 30);
+        s.wait_text(&shown(".grid table"), "go", 30);
+
         // A cluster is set up by its nodes, and the form keeps them.
         s.click_css(".side-actions .btn.primary");
         let change = |css: &str, value: &str| {

@@ -12,8 +12,10 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 use treasury_core::analyze::{
-    Analyzer, Classified, CountPlan, Destructive, Flags, LimitPlan, Placeholder, StatementClass,
+    Analyzer, Classified, CountPlan, Destructive, EditSource, Flags, LimitPlan, Placeholder,
+    Projected, StatementClass,
 };
+use treasury_core::edit::TableRef;
 
 /// Splits `line` into words as redis-cli does.
 pub fn words(line: &str) -> Result<Vec<String>, String> {
@@ -582,6 +584,50 @@ impl Analyzer for RedisAnalyzer {
     fn placeholders(&self, _statement: &str) -> Vec<Placeholder> {
         Vec::new()
     }
+
+    /// The key a result shows and its type, for editing in the grid: HGETALL, SMEMBERS,
+    /// ZRANGE by position WITHSCORES, LRANGE and GET read one whole key whose entries can be
+    /// told apart.
+    fn edit_source(&self, statement: &str) -> Result<EditSource, String> {
+        let pieces = pieces(statement);
+        let [p] = pieces.as_slice() else {
+            return Err("Only the result of one command can be edited.".into());
+        };
+        let argv = p.words.clone()?;
+        let name = argv
+            .first()
+            .map(|n| n.to_ascii_lowercase())
+            .unwrap_or_default();
+        let column = |c: &str| Projected::Column(c.into());
+        let (kind, items) = match (name.as_str(), argv.len()) {
+            ("hgetall", 2) => ("hash", vec![column("field"), column("value")]),
+            ("smembers", 2) => ("set", vec![column("member")]),
+            ("zrange", 5) if argv[4].eq_ignore_ascii_case("withscores") => {
+                ("zset", vec![column("member"), column("score")])
+            }
+            ("zrange", 4) => {
+                return Err(
+                    "Add WITHSCORES to edit a sorted set: each member needs its score.".into(),
+                );
+            }
+            ("lrange", 4) => ("list", vec![column("value"), column("index")]),
+            ("get", 2) => ("string", vec![column("value")]),
+            _ => {
+                return Err(
+                    "Only the result of HGETALL, SMEMBERS, ZRANGE … WITHSCORES, LRANGE or GET \
+                     can be edited: each reads one whole key."
+                        .into(),
+                );
+            }
+        };
+        Ok(EditSource {
+            table: TableRef {
+                schema: Some(kind.into()),
+                table: argv[1].clone(),
+            },
+            items,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -684,6 +730,24 @@ mod tests {
         assert_eq!(c.len(), 2);
         assert_eq!(&script[c[1].range.clone()], "GET a");
         assert_eq!(c[0].summary, "SET a");
+    }
+
+    #[test]
+    fn whole_keys_can_be_edited() {
+        let a = RedisAnalyzer::new(table());
+        let s = a.edit_source("HGETALL user:1").unwrap();
+        assert_eq!(
+            (s.table.schema.as_deref(), s.table.table.as_str()),
+            (Some("hash"), "user:1")
+        );
+        assert_eq!(a.edit_source("lrange q 0 -1").unwrap().items.len(), 2);
+        assert!(
+            a.edit_source("ZRANGE z 0 -1")
+                .unwrap_err()
+                .contains("WITHSCORES")
+        );
+        assert!(a.edit_source("HGET h f").is_err());
+        assert!(a.edit_source("GET a\nGET b").is_err());
     }
 
     #[test]

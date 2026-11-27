@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 mod conn;
+mod edit;
 mod error;
 mod introspect;
 pub mod lang;

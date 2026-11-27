@@ -344,6 +344,159 @@ mod docker {
         assert!(e.message.contains("only database 0"), "{e:?}");
     }
 
+    struct NoHosts;
+
+    #[async_trait]
+    impl treasury_tunnel::HostKeyPrompt for NoHosts {
+        async fn confirm_new(&self, _: &str, _: u16, _: &str, _: &str) -> bool {
+            false
+        }
+    }
+
+    /// The grid's path for keys: a hash, a list, a sorted set and a string edited through the
+    /// runtime, as the app does it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn whole_keys_are_edited_from_the_grid() {
+        use treasury_ipc::{CellEdit, RowEdits};
+        let s = Server::start(Engine::Redis).await;
+        let direct = s.session().await;
+        for cmd in [
+            "HSET user:9 name ada lang rust",
+            "RPUSH q a b c",
+            "ZADD z 1 a 2 b",
+            "SET greeting hello EX 300",
+        ] {
+            run(direct.as_ref(), cmd).await.unwrap();
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let rt = treasury_runtime::Runtime::new(
+            Arc::new(
+                treasury_store::Store::open_in_memory(treasury_vault::Sealer::new(
+                    treasury_vault::random_key().unwrap(),
+                ))
+                .unwrap(),
+            ),
+            Arc::new(treasury_vault::MemoryStore::default()),
+            vec![Arc::new(RedisDriver::redis())],
+            treasury_tunnel::KnownHosts {
+                app_file: dir.path().join("known_hosts"),
+                user_file: None,
+            },
+            Arc::new(NoHosts),
+            dir.path().to_owned(),
+        );
+        let config = s.config();
+        rt.secrets_of(&config.id)
+            .set(
+                treasury_core::config::SecretSlot::Password,
+                &secrecy::SecretString::from(PASSWORD),
+            )
+            .unwrap();
+        rt.connect(&config).await.unwrap();
+        let open = |stmt: &'static str| {
+            let rt = &rt;
+            let id = config.id.clone();
+            async move {
+                let p = rt.prepare(&id, stmt).await.unwrap();
+                let rid = rt.run(&id, stmt, p.token, None, false).await.unwrap();
+                rt.finish(rid).await.unwrap();
+                rid
+            }
+        };
+        let cell = |row: u64, column: usize, value: &str| CellEdit {
+            row,
+            column,
+            value: Some(value.into()),
+        };
+        let edits = |cells: Vec<CellEdit>,
+                     deletes: Vec<u64>,
+                     inserts: Vec<Vec<(usize, Option<String>)>>| RowEdits {
+            cells,
+            deletes,
+            inserts,
+        };
+
+        // A hash: a value changed, a field removed, one added. The field names stay as they are.
+        let rid = open("HGETALL user:9").await;
+        let info = rt.edit_info(rid, 0).await.unwrap();
+        assert_eq!(info.table.as_deref(), Some("the hash user:9"));
+        assert_eq!(info.columns, [false, true]);
+        let rows = rt.window(rid, 0, 0, 10).await.unwrap().rows;
+        let at = |name: &str| {
+            rows.iter()
+                .position(|r| r[0] == Value::Text(name.into()))
+                .unwrap() as u64
+        };
+        let e = edits(
+            vec![cell(at("name"), 1, "Ada")],
+            vec![at("lang")],
+            vec![vec![(0, Some("city".into())), (1, Some("paris".into()))]],
+        );
+        let review = rt.edit_review(rid, 0, &e).await.unwrap();
+        assert!(
+            review.contains(&"HSET user:9 name Ada".to_owned()),
+            "{review:?}"
+        );
+        rt.edit_apply(rid, 0, &e).await.unwrap();
+        let after = run(direct.as_ref(), "HGETALL user:9").await.unwrap();
+        let text = format!("{after:?}");
+        assert!(
+            text.contains("\"Ada\"") && text.contains("\"paris\"") && !text.contains("rust"),
+            "{text}"
+        );
+
+        // A list: an entry changed by its position, one added; removing by position is refused.
+        let rid = open("LRANGE q 0 -1").await;
+        rt.edit_apply(
+            rid,
+            0,
+            &edits(
+                vec![cell(1, 0, "B")],
+                vec![],
+                vec![vec![(0, Some("d".into()))]],
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            run(direct.as_ref(), "LRANGE q 0 -1").await.unwrap(),
+            [
+                [Value::Text("a".into()), Value::I64(0)],
+                [Value::Text("B".into()), Value::I64(1)],
+                [Value::Text("c".into()), Value::I64(2)],
+                [Value::Text("d".into()), Value::I64(3)],
+            ]
+        );
+        let rid = open("LRANGE q 0 -1").await;
+        let refused = rt
+            .edit_review(rid, 0, &edits(vec![], vec![0], vec![]))
+            .await
+            .unwrap_err();
+        assert!(refused.message.contains("LREM"), "{refused:?}");
+
+        // A sorted set: a score changed.
+        let rid = open("ZRANGE z 0 -1 WITHSCORES").await;
+        rt.edit_apply(rid, 0, &edits(vec![cell(0, 1, "5")], vec![], vec![]))
+            .await
+            .unwrap();
+        assert_eq!(
+            run(direct.as_ref(), "ZRANGE z 0 -1").await.unwrap(),
+            [[Value::Text("b".into())], [Value::Text("a".into())]]
+        );
+
+        // A string keeps its expiry.
+        let rid = open("GET greeting").await;
+        rt.edit_apply(rid, 0, &edits(vec![cell(0, 0, "hi")], vec![], vec![]))
+            .await
+            .unwrap();
+        assert_eq!(
+            run(direct.as_ref(), "GET greeting").await.unwrap(),
+            [[Value::Text("hi".into())]]
+        );
+        let ttl = run(direct.as_ref(), "TTL greeting").await.unwrap();
+        assert!(matches!(ttl[0][0], Value::I64(n) if n > 0), "{ttl:?}");
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn redis_specifics() {
         let s = Server::start(Engine::Redis).await;

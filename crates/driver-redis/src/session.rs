@@ -645,7 +645,7 @@ impl Pager {
             Paged::Zset { scores: true, .. } => &["member", "score"],
             Paged::Zset { .. } | Paged::Set { .. } => &["member"],
             Paged::Hash { .. } => &["field", "value"],
-            Paged::List { .. } => &["value"],
+            Paged::List { .. } => &["value", "index"],
         };
         Self {
             run,
@@ -739,7 +739,16 @@ impl Pager {
                 } else {
                     Position::Range { at: to + 1, last }
                 };
-                (value::page_rows(items), next)
+                let mut rows = value::page_rows(items);
+                if matches!(self.paged, Paged::List { .. }) {
+                    // Each entry's position in the list, which LSET needs to change it.
+                    for (n, row) in rows.iter_mut().enumerate() {
+                        row.push(treasury_core::Value::I64(
+                            at + i64::try_from(n).unwrap_or(0),
+                        ));
+                    }
+                }
+                (rows, next)
             }
             Position::Scan(cursor) => {
                 let (key, scan) = match &self.paged {
@@ -798,7 +807,7 @@ impl Session for RedisSession {
                 CancelMethod::KillFromSecondConnection
             },
             health: false,
-            edit: false,
+            edit: true,
             transactions: false,
             read_only: ReadOnlyEnforcement::Client,
             multiple_results: false,
@@ -863,6 +872,10 @@ impl Session for RedisSession {
     }
 
     fn introspect(&self) -> Option<&dyn Introspect> {
+        Some(self)
+    }
+
+    fn edit(&self) -> Option<&dyn treasury_core::driver::Edit> {
         Some(self)
     }
 }

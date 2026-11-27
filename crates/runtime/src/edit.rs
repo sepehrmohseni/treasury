@@ -6,6 +6,7 @@
 
 use crate::{Running, Runtime, guard_error};
 use std::collections::BTreeMap;
+use treasury_core::config::Family;
 use treasury_core::edit::{Changeset, RowChange, TableRef};
 use treasury_core::exec::ValueKind;
 use treasury_core::{Error, Result, Value};
@@ -21,16 +22,20 @@ pub(crate) struct Target {
     key_at: Vec<usize>,
     /// The table column behind each result column; `None` for computed ones.
     columns: Vec<Option<String>>,
+    /// Result columns that name a row's entry and cannot change in place (they can be set on a
+    /// new row).
+    locked: Vec<usize>,
     kinds: Vec<ValueKind>,
     /// The rows are documents, whose fields take any type.
     documents: bool,
 }
 
-/// `schema.table`, for messages.
-fn display(t: &TableRef) -> String {
-    match &t.schema {
-        Some(s) => format!("{s}.{}", t.table),
-        None => t.table.clone(),
+/// `schema.table`, for messages. A Redis result's "schema" is its key's type: `the hash user:1`.
+fn display(t: &TableRef, family: Family) -> String {
+    match (&t.schema, family) {
+        (Some(kind), Family::KeyValue) => format!("the {kind} {}", t.table),
+        (Some(s), _) => format!("{s}.{}", t.table),
+        (None, _) => t.table.clone(),
     }
 }
 
@@ -96,10 +101,16 @@ impl Runtime {
     /// Whether the rows of result set `set` can be edited, and which of its columns.
     pub async fn edit_info(&self, rid: u64, set: usize) -> Result<EditInfo> {
         let r = self.running(rid)?;
+        let family = self.live(&r.connection).await?.config.engine.family();
         Ok(match self.target(&r, set).await? {
             Ok(t) => EditInfo {
-                table: Some(display(&t.table)),
-                columns: t.columns.iter().map(Option::is_some).collect(),
+                table: Some(display(&t.table, family)),
+                columns: t
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| c.is_some() && !t.locked.contains(&i))
+                    .collect(),
                 reason: None,
             },
             Err(reason) => EditInfo {
@@ -181,7 +192,7 @@ impl Runtime {
         if key_columns.is_empty() {
             return Ok(Err(format!(
                 "{} has no primary key or unique key, so Treasury cannot tell its rows apart.",
-                display(&source.table)
+                display(&source.table, live.config.engine.family())
             )));
         }
         let mut key_at = Vec::with_capacity(key_columns.len());
@@ -195,22 +206,28 @@ impl Runtime {
                 }
             }
         }
-        let documents = live.config.engine.family() == treasury_core::config::Family::Document;
-        let mut columns = columns;
-        if documents {
-            // A document's key (`_id`) cannot change.
-            for &i in &key_at {
-                if let Some(c) = columns.get_mut(i) {
-                    *c = None;
-                }
-            }
-        }
+        let family = live.config.engine.family();
+        let documents = family == Family::Document;
+        // A document's `_id`, a hash's field, a set's member and a list entry's position name
+        // what they belong to and cannot change in place; a Redis string's one column is its
+        // value, which can.
+        let fixed_keys = match family {
+            Family::Document => true,
+            Family::KeyValue => source.table.schema.as_deref() != Some("string"),
+            _ => false,
+        };
+        let locked = if fixed_keys {
+            key_at.clone()
+        } else {
+            Vec::new()
+        };
         let target = Target {
             set,
             table: source.table,
             key_columns,
             key_at,
             columns,
+            locked,
             kinds: s.columns.iter().map(|c| c.kind).collect(),
             documents,
         };
@@ -252,6 +269,12 @@ impl Runtime {
             let key = self.key_of(r, &target, set, row).await?;
             let mut values: Vec<(String, Value)> = Vec::new();
             for c in cells {
+                if target.locked.contains(&c.column) {
+                    return Err(guard_error(
+                        "That column names the entry, so it cannot change in place. Delete the row \
+                         and add one with the new name.",
+                    ));
+                }
                 let (column, value) = value_of(c.column, c.value.as_deref())?;
                 // The last edit of a cell is the one that counts.
                 match values.iter_mut().find(|(n, _)| *n == column) {
