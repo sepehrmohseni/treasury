@@ -682,6 +682,7 @@ impl Runtime {
 }
 
 mod catalog;
+mod copy;
 mod edit;
 
 #[cfg(test)]

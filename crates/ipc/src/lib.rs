@@ -192,6 +192,10 @@ pub struct RowEdits {
     pub cells: Vec<CellEdit>,
     /// Rows to delete, by index.
     pub deletes: Vec<u64>,
+    /// Rows to add: for each, the value typed per column (by index; `None` for NULL). Columns
+    /// left out get the table's default.
+    #[serde(default)]
+    pub inserts: Vec<Vec<(usize, Option<String>)>>,
 }
 
 /// Whether a result set's rows can be edited.
@@ -349,4 +353,53 @@ pub struct ColumnView {
     pub name: String,
     /// Its type, as in DDL.
     pub type_name: String,
+}
+
+/// The formats a range of the grid can be copied in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CopyFormat {
+    /// Values separated by tabs, without a header, as spreadsheets paste them.
+    Tsv,
+    /// CSV with a header.
+    Csv,
+    /// A JSON array of objects.
+    Json,
+    /// A Markdown table.
+    Markdown,
+    /// INSERT statements for the table the rows came from.
+    Insert,
+}
+
+impl CopyFormat {
+    /// Every format, in the order the grid offers them.
+    pub const ALL: [CopyFormat; 5] = [
+        CopyFormat::Tsv,
+        CopyFormat::Csv,
+        CopyFormat::Json,
+        CopyFormat::Markdown,
+        CopyFormat::Insert,
+    ];
+
+    /// What the grid calls it.
+    pub fn label(self) -> &'static str {
+        match self {
+            CopyFormat::Tsv => "Values (TSV)",
+            CopyFormat::Csv => "CSV",
+            CopyFormat::Json => "JSON",
+            CopyFormat::Markdown => "Markdown",
+            CopyFormat::Insert => "INSERT",
+        }
+    }
+}
+
+/// Text copied from the grid.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CopyView {
+    /// The text for the clipboard.
+    pub text: String,
+    /// How many rows it holds.
+    pub rows: u64,
+    /// Fewer rows than were selected, because of the copy limit.
+    pub cut: bool,
 }

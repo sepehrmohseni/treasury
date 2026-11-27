@@ -257,6 +257,90 @@ mod docker {
         assert_all(&Mongo::start().await).await;
     }
 
+    struct NoHosts;
+
+    #[async_trait]
+    impl treasury_tunnel::HostKeyPrompt for NoHosts {
+        async fn confirm_new(&self, _: &str, _: u16, _: &str, _: &str) -> bool {
+            false
+        }
+    }
+
+    /// The grid's path for documents: a find's result is edited and documents are added, through
+    /// the runtime, as the app does it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn found_documents_are_edited_and_added_from_the_grid() {
+        use treasury_ipc::{CellEdit, RowEdits};
+        let m = Mongo::start().await;
+        let s = m.session().await;
+        run(
+            s.as_ref(),
+            r#"{"insert": "items", "documents": [{"_id": 1, "name": "a", "tags": []}]}"#,
+        )
+        .await
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let rt = treasury_runtime::Runtime::new(
+            Arc::new(
+                treasury_store::Store::open_in_memory(treasury_vault::Sealer::new(
+                    treasury_vault::random_key().unwrap(),
+                ))
+                .unwrap(),
+            ),
+            Arc::new(treasury_vault::MemoryStore::default()),
+            vec![Arc::new(MongoDriver)],
+            treasury_tunnel::KnownHosts {
+                app_file: dir.path().join("known_hosts"),
+                user_file: None,
+            },
+            Arc::new(NoHosts),
+            dir.path().to_owned(),
+        );
+        let config = m.config();
+        rt.secrets_of(&config.id)
+            .set(
+                treasury_core::config::SecretSlot::Password,
+                &secrecy::SecretString::from(PASSWORD),
+            )
+            .unwrap();
+        rt.connect(&config).await.unwrap();
+        let find = r#"{"find": "items", "filter": {}, "$db": "treasury"}"#;
+        let p = rt.prepare(&config.id, find).await.unwrap();
+        let rid = rt
+            .run(&config.id, find, p.token, None, false)
+            .await
+            .unwrap();
+        rt.finish(rid).await.unwrap();
+        let info = rt.edit_info(rid, 0).await.unwrap();
+        assert_eq!(info.table.as_deref(), Some("treasury.items"), "{info:?}");
+        let columns = rt.status(rid).unwrap().sets[0].columns.clone();
+        let col = |n: &str| columns.iter().position(|c| c.name == n).unwrap();
+        assert!(!info.columns[col("_id")], "a document's _id cannot change");
+        assert!(info.columns[col("tags")]);
+        let edits = RowEdits {
+            cells: vec![CellEdit {
+                row: 0,
+                column: col("tags"),
+                value: Some(r#"["x", {"y": 2}]"#.into()),
+            }],
+            deletes: vec![],
+            inserts: vec![vec![(col("name"), Some("b".into()))]],
+        };
+        let review = rt.edit_review(rid, 0, &edits).await.unwrap();
+        assert_eq!(review.len(), 2, "{review:?}");
+        assert_eq!(rt.edit_apply(rid, 0, &edits).await.unwrap(), 2);
+        let docs = run(
+            s.as_ref(),
+            r#"{"find": "items", "filter": {}, "sort": {"name": 1}}"#,
+        )
+        .await
+        .unwrap();
+        let text = format!("{docs:?}");
+        assert_eq!(docs.len(), 2, "{text}");
+        assert!(text.contains("\"x\"") && text.contains("\"b\""), "{text}");
+        assert!(matches!(docs[0][col("tags")], Value::List(_)), "{text}");
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn mongo_specifics() {
         let m = Mongo::start().await;

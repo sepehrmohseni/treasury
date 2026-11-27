@@ -22,6 +22,8 @@ pub(crate) struct Target {
     /// The table column behind each result column; `None` for computed ones.
     columns: Vec<Option<String>>,
     kinds: Vec<ValueKind>,
+    /// The rows are documents, whose fields take any type.
+    documents: bool,
 }
 
 /// `schema.table`, for messages.
@@ -50,7 +52,12 @@ fn position(columns: &[Option<String>], key: &str) -> Option<usize> {
 
 /// The value typed into a cell, checked against the column's kind. `None` is NULL. Kinds the
 /// server parses better than Treasury could (dates, decimals, JSON) go as text.
-pub(crate) fn parse(text: Option<&str>, kind: ValueKind, column: &str) -> Result<Value> {
+pub(crate) fn parse(
+    text: Option<&str>,
+    kind: ValueKind,
+    column: &str,
+    documents: bool,
+) -> Result<Value> {
     let Some(t) = text else {
         return Ok(Value::Null);
     };
@@ -63,6 +70,24 @@ pub(crate) fn parse(text: Option<&str>, kind: ValueKind, column: &str) -> Result
             "false" | "f" | "no" | "0" => Value::Bool(false),
             _ => return Err(bad("true or false")),
         },
+        ValueKind::Text => Value::Text(t.to_owned()),
+        // A document's fields hold any type: what is typed is read as Extended JSON when it is
+        // JSON (`42`, `{"a": 1}`, `[1, 2]`, `{"$oid": "..."}`), and kept as text otherwise. A
+        // date can be typed as it is shown.
+        ValueKind::Timestamp | ValueKind::TimestampTz
+            if documents && !t.trim().starts_with('{') =>
+        {
+            Value::Json(treasury_core::value::Json {
+                text: serde_json::json!({ "$date": t.trim() }).to_string(),
+                binary: false,
+            })
+        }
+        _ if documents && serde_json::from_str::<serde_json::Value>(t).is_ok() => {
+            Value::Json(treasury_core::value::Json {
+                text: t.trim().to_owned(),
+                binary: false,
+            })
+        }
         _ => Value::Text(t.to_owned()),
     })
 }
@@ -170,6 +195,16 @@ impl Runtime {
                 }
             }
         }
+        let documents = live.config.engine.family() == treasury_core::config::Family::Document;
+        let mut columns = columns;
+        if documents {
+            // A document's key (`_id`) cannot change.
+            for &i in &key_at {
+                if let Some(c) = columns.get_mut(i) {
+                    *c = None;
+                }
+            }
+        }
         let target = Target {
             set,
             table: source.table,
@@ -177,6 +212,7 @@ impl Runtime {
             key_at,
             columns,
             kinds: s.columns.iter().map(|c| c.kind).collect(),
+            documents,
         };
         *r.edit_target
             .lock()
@@ -187,9 +223,18 @@ impl Runtime {
     /// `edits` as a changeset on the table behind result set `set`.
     async fn changeset(&self, r: &Running, set: usize, edits: &RowEdits) -> Result<Changeset> {
         let target = self.target(r, set).await?.map_err(guard_error)?;
-        if edits.cells.is_empty() && edits.deletes.is_empty() {
+        if edits.cells.is_empty() && edits.deletes.is_empty() && edits.inserts.is_empty() {
             return Err(guard_error("There are no changes to save."));
         }
+        let value_of = |column: usize, text: Option<&str>| -> Result<(String, Value)> {
+            let Some(Some(name)) = target.columns.get(column) else {
+                return Err(guard_error(
+                    "That column is computed by the statement, so it cannot be edited.",
+                ));
+            };
+            let kind = target.kinds.get(column).copied().unwrap_or(ValueKind::Text);
+            Ok((name.clone(), parse(text, kind, name, target.documents)?))
+        };
         let mut deletes = edits.deletes.clone();
         deletes.sort_unstable();
         deletes.dedup();
@@ -207,21 +252,11 @@ impl Runtime {
             let key = self.key_of(r, &target, set, row).await?;
             let mut values: Vec<(String, Value)> = Vec::new();
             for c in cells {
-                let Some(Some(column)) = target.columns.get(c.column) else {
-                    return Err(guard_error(
-                        "That column is computed by the statement, so it cannot be edited.",
-                    ));
-                };
-                let kind = target
-                    .kinds
-                    .get(c.column)
-                    .copied()
-                    .unwrap_or(ValueKind::Text);
-                let value = parse(c.value.as_deref(), kind, column)?;
+                let (column, value) = value_of(c.column, c.value.as_deref())?;
                 // The last edit of a cell is the one that counts.
-                match values.iter_mut().find(|(n, _)| n == column) {
+                match values.iter_mut().find(|(n, _)| *n == column) {
                     Some(existing) => existing.1 = value,
-                    None => values.push((column.clone(), value)),
+                    None => values.push((column, value)),
                 }
             }
             changes.push(RowChange::Update { key, set: values });
@@ -229,6 +264,17 @@ impl Runtime {
         for row in deletes {
             let key = self.key_of(r, &target, set, row).await?;
             changes.push(RowChange::Delete { key });
+        }
+        for row in &edits.inserts {
+            let mut values: Vec<(String, Value)> = Vec::new();
+            for (column, text) in row {
+                let (column, value) = value_of(*column, text.as_deref())?;
+                match values.iter_mut().find(|(n, _)| *n == column) {
+                    Some(existing) => existing.1 = value,
+                    None => values.push((column, value)),
+                }
+            }
+            changes.push(RowChange::Insert { values });
         }
         Ok(Changeset {
             table: target.table,
@@ -269,24 +315,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn typed_values_are_checked_against_their_column() {
-        assert_eq!(parse(None, ValueKind::Integer, "n").unwrap(), Value::Null);
+    fn document_fields_take_json() {
+        let json = |t: &str, k: ValueKind| match parse(Some(t), k, "f", true).unwrap() {
+            Value::Json(j) => Some(j.text),
+            _ => None,
+        };
+        assert_eq!(json("42", ValueKind::Any).as_deref(), Some("42"));
         assert_eq!(
-            parse(Some(" 42 "), ValueKind::Integer, "n").unwrap(),
+            json(r#"{"a": [1, 2]}"#, ValueKind::Document).as_deref(),
+            Some(r#"{"a": [1, 2]}"#)
+        );
+        assert_eq!(
+            json("2026-11-27T10:00:00Z", ValueKind::Timestamp).as_deref(),
+            Some(r#"{"$date":"2026-11-27T10:00:00Z"}"#)
+        );
+        // Not JSON, or a text field: kept as text.
+        assert_eq!(
+            parse(Some("hello"), ValueKind::Any, "f", true).unwrap(),
+            Value::Text("hello".into())
+        );
+        assert_eq!(
+            parse(Some("42"), ValueKind::Text, "f", true).unwrap(),
+            Value::Text("42".into())
+        );
+        // SQL columns are not read as JSON.
+        assert_eq!(
+            parse(Some("[1]"), ValueKind::List, "f", false).unwrap(),
+            Value::Text("[1]".into())
+        );
+    }
+
+    #[test]
+    fn typed_values_are_checked_against_their_column() {
+        assert_eq!(
+            parse(None, ValueKind::Integer, "n", false).unwrap(),
+            Value::Null
+        );
+        assert_eq!(
+            parse(Some(" 42 "), ValueKind::Integer, "n", false).unwrap(),
             Value::I64(42)
         );
-        assert!(parse(Some("4.2"), ValueKind::Integer, "n").is_err());
+        assert!(parse(Some("4.2"), ValueKind::Integer, "n", false).is_err());
         assert_eq!(
-            parse(Some("no"), ValueKind::Bool, "b").unwrap(),
+            parse(Some("no"), ValueKind::Bool, "b", false).unwrap(),
             Value::Bool(false)
         );
         assert_eq!(
-            parse(Some("2026-11-26"), ValueKind::Date, "d").unwrap(),
+            parse(Some("2026-11-26"), ValueKind::Date, "d", false).unwrap(),
             Value::Text("2026-11-26".into())
         );
         // Text keeps its spaces; an empty cell is an empty string, not NULL.
         assert_eq!(
-            parse(Some(" "), ValueKind::Text, "t").unwrap(),
+            parse(Some(" "), ValueKind::Text, "t", false).unwrap(),
             Value::Text(" ".into())
         );
     }

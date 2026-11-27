@@ -6,8 +6,10 @@
 
 use serde_json::Value as Json;
 use treasury_core::analyze::{
-    Analyzer, Classified, CountPlan, Destructive, Flags, LimitPlan, Placeholder, StatementClass,
+    Analyzer, Classified, CountPlan, Destructive, EditSource, Flags, LimitPlan, Placeholder,
+    Projected, StatementClass,
 };
+use treasury_core::edit::TableRef;
 
 /// The MongoDB analyzer.
 #[derive(Default, Clone, Copy)]
@@ -281,6 +283,60 @@ impl Analyzer for MongoAnalyzer {
         CountPlan::Query(query.to_string())
     }
 
+    /// The collection a `find` reads, so its documents can be edited in the grid. With a
+    /// projection that names fields, those fields; with none, or one that only leaves fields out,
+    /// every field. Aggregations make new documents, so they cannot be edited.
+    fn edit_source(&self, statement: &str) -> Result<EditSource, String> {
+        let pieces = pieces(statement);
+        let [piece] = pieces.as_slice() else {
+            return Err("Only the result of one find command can be edited.".into());
+        };
+        let doc = piece.doc.as_ref().map_err(Clone::clone)?;
+        if command_name(doc) != Some("find") {
+            return Err(
+                "Only documents a find command returned can be edited; an aggregation makes new \
+                 documents."
+                    .into(),
+            );
+        }
+        let collection = doc
+            .get("find")
+            .and_then(Json::as_str)
+            .ok_or("The find command names no collection.")?;
+        let included: Vec<(&String, &Json)> = doc
+            .get("projection")
+            .and_then(Json::as_object)
+            .map(|p| {
+                p.iter()
+                    .filter(|(_, v)| !matches!(v, Json::Bool(false)) && v.as_i64() != Some(0))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let items = if included.is_empty() {
+            vec![Projected::AllColumns]
+        } else {
+            included
+                .into_iter()
+                .map(|(field, v)| {
+                    // `{"total": 1}` shows the field; `{"total": {"$sum": ...}}` computes one.
+                    if matches!(v, Json::Bool(true)) || v.as_i64() == Some(1) {
+                        Projected::Column(field.clone())
+                    } else {
+                        Projected::Expression
+                    }
+                })
+                .chain(std::iter::once(Projected::Column("_id".into())))
+                .collect()
+        };
+        Ok(EditSource {
+            table: TableRef {
+                schema: doc.get("$db").and_then(Json::as_str).map(str::to_owned),
+                table: collection.to_owned(),
+            },
+            items,
+        })
+    }
+
     fn placeholders(&self, _statement: &str) -> Vec<Placeholder> {
         Vec::new()
     }
@@ -374,6 +430,40 @@ mod tests {
             MongoAnalyzer.limit(r#"{"ping": 1}"#, 50),
             LimitPlan::NotApplicable
         );
+    }
+
+    #[test]
+    fn found_documents_can_be_edited() {
+        let a = MongoAnalyzer;
+        let s = a
+            .edit_source(r#"{"find": "users", "filter": {}, "$db": "app"}"#)
+            .unwrap();
+        assert_eq!(
+            (s.table.schema.as_deref(), s.table.table.as_str()),
+            (Some("app"), "users")
+        );
+        assert_eq!(s.items, vec![Projected::AllColumns]);
+        let s = a
+            .edit_source(r#"{"find": "users", "projection": {"name": 1, "secret": 0, "n": {"$size": "$tags"}}}"#)
+            .unwrap();
+        assert_eq!(
+            s.items,
+            vec![
+                Projected::Column("name".into()),
+                Projected::Expression,
+                Projected::Column("_id".into())
+            ]
+        );
+        // Leaving fields out still shows the others as they are.
+        let s = a
+            .edit_source(r#"{"find": "users", "projection": {"secret": 0}}"#)
+            .unwrap();
+        assert_eq!(s.items, vec![Projected::AllColumns]);
+        assert!(
+            a.edit_source(r#"{"aggregate": "users", "pipeline": []}"#)
+                .is_err()
+        );
+        assert!(a.edit_source(r#"{"find": "a"} {"find": "b"}"#).is_err());
     }
 
     #[test]

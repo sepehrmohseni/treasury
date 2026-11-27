@@ -340,6 +340,7 @@ async fn edits_reach_rows_by_the_key_the_server_sent() {
             cell(4, None),
         ],
         deletes: vec![3, 3],
+        inserts: vec![],
     };
     assert_eq!(f.rt.edit_review(rid, 0, &edits).await.unwrap().len(), 3);
     assert_eq!(f.rt.edit_apply(rid, 0, &edits).await.unwrap(), 3);
@@ -366,6 +367,7 @@ async fn edits_reach_rows_by_the_key_the_server_sent() {
     let typo = RowEdits {
         cells: vec![cell(0, Some("two"))],
         deletes: Vec::new(),
+        inserts: vec![],
     };
     let err = f.rt.edit_apply(rid, 0, &typo).await.unwrap_err();
     assert!(matches!(err.kind, ErrorKind::Config { .. }), "{err:?}");
@@ -381,6 +383,7 @@ async fn production_edits_wait_for_unlocked_writes() {
     let edits = RowEdits {
         cells: vec![cell(0, Some("9"))],
         deletes: Vec::new(),
+        inserts: vec![],
     };
     let err = f.rt.edit_apply(rid, 0, &edits).await.unwrap_err();
     assert_eq!(err.kind, ErrorKind::Guard);
@@ -404,6 +407,7 @@ async fn results_the_analyzer_cannot_place_say_why() {
             &RowEdits {
                 cells: vec![cell(0, Some("x"))],
                 deletes: Vec::new(),
+                inserts: vec![],
             },
         )
         .await
@@ -463,4 +467,34 @@ async fn the_catalog_lists_tables_with_their_schema_and_columns() {
     // A statement that changes the schema makes it read again.
     run_all(&f, &c, "ddl").await;
     assert!(!Arc::ptr_eq(&catalog, &f.rt.catalog(&c.id).await.unwrap()));
+}
+
+#[tokio::test]
+async fn a_range_of_a_result_copies_as_text() {
+    let f = runtime();
+    let c = open(&f.rt, Environment::Development).await;
+    let rid = run_all(&f, &c, "rows 30").await;
+    let tsv =
+        f.rt.copy(rid, 0, 2..5, &[0], treasury_ipc::CopyFormat::Tsv)
+            .await
+            .unwrap();
+    assert_eq!(
+        (tsv.text.as_str(), tsv.rows, tsv.cut),
+        ("3\n4\n5\n", 3, false)
+    );
+    let md =
+        f.rt.copy(rid, 0, 0..1, &[0], treasury_ipc::CopyFormat::Markdown)
+            .await
+            .unwrap();
+    assert_eq!(md.text, "| n |\n| --- |\n| 1 |\n");
+    // The mock's rows come from its table "numbers".
+    let insert =
+        f.rt.copy(rid, 0, 0..1, &[0], treasury_ipc::CopyFormat::Insert)
+            .await
+            .unwrap();
+    assert!(
+        insert.text.contains("INSERT INTO") && insert.text.contains("numbers"),
+        "{}",
+        insert.text
+    );
 }

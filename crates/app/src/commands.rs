@@ -11,9 +11,10 @@ use treasury_core::format::{FormatOptions, display};
 use treasury_core::schema::{ChildPage, ChildQuery, ObjectDetails, ObjectPath};
 use treasury_core::{Error, Result};
 use treasury_ipc::{
-    AppFacts, CatalogView, ColumnView, ConnectionView, EditInfo, ExportFormat, ExportView,
-    HistoryView, ImportItem, ImportPreview, LiveView, NAME_LIMIT, Prepared, RowEdits, RunOutcome,
-    SavedQueryView, SecretInput, TabView, UpdateView, WindowView, folder_path,
+    AppFacts, CatalogView, ColumnView, ConnectionView, CopyFormat, CopyView, EditInfo,
+    ExportFormat, ExportView, HistoryView, ImportItem, ImportPreview, LiveView, NAME_LIMIT,
+    Prepared, RowEdits, RunOutcome, SavedQueryView, SecretInput, TabView, UpdateView, WindowView,
+    folder_path,
 };
 use treasury_store::{RunStatus, SavedQuery, TabState};
 
@@ -265,6 +266,23 @@ pub async fn edit_apply(
     edits: RowEdits,
 ) -> Result<u64> {
     state.runtime.edit_apply(result, set, &edits).await
+}
+
+/// Rows `start..end` and `columns` of a result set, as text for the clipboard.
+#[tauri::command]
+pub async fn copy_rows(
+    state: State<'_, AppState>,
+    result: u64,
+    set: usize,
+    start: u64,
+    end: u64,
+    columns: Vec<usize>,
+    format: CopyFormat,
+) -> Result<CopyView> {
+    state
+        .runtime
+        .copy(result, set, start..end, &columns, format)
+        .await
 }
 
 #[tauri::command]

@@ -99,6 +99,7 @@ fn main() {
             commands::edit_info,
             commands::edit_review,
             commands::edit_apply,
+            commands::copy_rows,
             commands::export_result,
             commands::import_preview,
             commands::import_apply,

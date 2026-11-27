@@ -25,6 +25,10 @@ base64 = "0.22.1"
 
 [dev-dependencies]
 treasury-tunnel.workspace = true
+treasury-runtime.workspace = true
+treasury-store.workspace = true
+treasury-vault.workspace = true
+treasury-ipc.workspace = true
 treasury-driver-postgres.workspace = true
 treasury-driver-mysql.workspace = true
 treasury-driver-mssql.workspace = true
