@@ -160,6 +160,13 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 /* Editing: the selected cell, cells changed but not saved, rows to delete, the cell editor. */
 .grid td.sel { box-shadow: inset 0 0 0 2px var(--green); }
 .grid td.changed { background: var(--amber-soft); }
+.grid td.inrange { background: var(--select); }
+.grid:focus { outline: none; }
+.grid tr.new-row td:not(.rownum) { background: var(--green-soft); }
+.grid tr.new-row td.null { font-style: italic; }
+.remove-new { border: 0; background: none; color: var(--faint); padding: 0 4px; }
+.remove-new:hover { color: var(--red); }
+select.copy-as { padding-inline-end: 24px; }
 .grid tr.deleted td:not(.rownum) { text-decoration: line-through; color: var(--faint); background: var(--red-soft); }
 .grid td.editing { padding: 0; box-shadow: inset 0 0 0 2px var(--green); }
 .cell-input { width: 100%; height: calc(var(--row) - 1px); border: 0; padding: 0 7px; font: inherit; color: var(--ink); background: var(--raised); outline: none; }

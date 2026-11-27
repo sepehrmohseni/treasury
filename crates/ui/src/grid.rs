@@ -14,7 +14,9 @@ use leptos::prelude::*;
 use std::collections::HashMap;
 use treasury_core::exec::ExecutionStatus;
 use treasury_core::format::Cell;
-use treasury_ipc::{CellEdit, EditInfo, ExportFormat, ExportView, RowEdits, WindowView};
+use treasury_ipc::{
+    CellEdit, CopyFormat, CopyView, EditInfo, ExportFormat, ExportView, RowEdits, WindowView,
+};
 use wasm_bindgen::JsCast;
 
 const ROW: f64 = 24.0;
@@ -55,7 +57,24 @@ fn change_count(edits: &RowEdits) -> usize {
     let mut rows = edits.deletes.clone();
     rows.sort_unstable();
     rows.dedup();
-    cells.len() + rows.len()
+    cells.len() + rows.len() + edits.inserts.len()
+}
+
+/// The rectangle between the cell first clicked and the one shift-clicked: rows and columns,
+/// both ends included.
+fn rectangle(anchor: (u64, usize), focus: (u64, usize)) -> ((u64, u64), (usize, usize)) {
+    (
+        (anchor.0.min(focus.0), anchor.0.max(focus.0)),
+        (anchor.1.min(focus.1), anchor.1.max(focus.1)),
+    )
+}
+
+/// What a new row shows in column `c`: the value typed, NULL, or that the default applies.
+fn new_value(row: &[(usize, Option<String>)], c: usize) -> Option<Option<String>> {
+    row.iter()
+        .rev()
+        .find(|(col, _)| *col == c)
+        .map(|(_, v)| v.clone())
 }
 
 /// Focuses and selects the cell editor once it is in the page.
@@ -157,7 +176,11 @@ pub fn Results(
     let pending = RwSignal::new(RowEdits::default());
     Effect::new(move |_| unsaved.set(pending.with(change_count)));
     let selected = RwSignal::new(None::<(u64, usize)>);
+    // Where a shift-click selection starts.
+    let anchor = RwSignal::new(None::<(u64, usize)>);
     let editing = RwSignal::new(None::<(u64, usize)>);
+    // A cell of a new row being typed in: the row's place among the new rows, and the column.
+    let editing_new = RwSignal::new(None::<(usize, usize)>);
     let draft = RwSignal::new(String::new());
 
     let reset_edits = move || {
@@ -165,7 +188,23 @@ pub fn Results(
         asked.set(None);
         pending.set(RowEdits::default());
         selected.set(None);
+        anchor.set(None);
         editing.set(None);
+        editing_new.set(None);
+    };
+
+    // A click selects a cell; a shift-click selects the rectangle up to it.
+    let pick_cell = move |ev: &web_sys::MouseEvent, at: (u64, usize)| {
+        if !(ev.shift_key() && anchor.get_untracked().is_some()) {
+            anchor.set(Some(at));
+        }
+        selected.set(Some(at));
+    };
+    let selection = move || {
+        anchor
+            .get()
+            .zip(selected.get())
+            .map(|(a, f)| rectangle(a, f))
     };
 
     let refresh = move |rid: u64| {
@@ -360,6 +399,67 @@ pub fn Results(
         }
     };
 
+    // Ends typing in a cell of a new row, keeping what was typed.
+    let commit_new = move |row: usize, column: usize| {
+        if editing_new.get_untracked() != Some((row, column)) {
+            return;
+        }
+        editing_new.set(None);
+        let value = draft.get_untracked();
+        pending.update(|p| {
+            if let Some(r) = p.inserts.get_mut(row) {
+                r.retain(|(c, _)| *c != column);
+                r.push((column, Some(value)));
+            }
+        });
+    };
+
+    let add_row = move |_| pending.update(|p| p.inserts.push(Vec::new()));
+
+    // Copies the selection as text in `format`, as the app renders it.
+    let copy = move |format: CopyFormat| {
+        let (Some(rid), Some(((r0, r1), (c0, c1)))) = (result.get_untracked(), selection()) else {
+            return;
+        };
+        let s = set.get_untracked();
+        let single = r0 == r1 && c0 == c1;
+        leptos::task::spawn_local(async move {
+            let reply = ipc::call::<_, CopyView>(
+                "copy_rows",
+                &serde_json::json!({
+                    "result": rid, "set": s, "start": r0, "end": r1 + 1,
+                    "columns": (c0..=c1).collect::<Vec<_>>(), "format": format,
+                }),
+            )
+            .await;
+            match reply {
+                Ok(c) => {
+                    // One cell is pasted as its value alone.
+                    let text = if single && format == CopyFormat::Tsv {
+                        c.text.trim_end_matches(['\n', '\r']).to_owned()
+                    } else {
+                        c.text
+                    };
+                    let rows = if c.rows == 1 {
+                        "1 row".to_owned()
+                    } else {
+                        format!("{} rows", thousands(c.rows))
+                    };
+                    state.notice.set(Some(if !ipc::to_clipboard(&text).await {
+                        "The clipboard refused the text.".to_owned()
+                    } else if c.cut {
+                        format!("Copied the first {rows} as {}.", format.label())
+                    } else if single && format == CopyFormat::Tsv {
+                        "Copied the value.".to_owned()
+                    } else {
+                        format!("Copied {rows} as {}.", format.label())
+                    }));
+                }
+                Err(e) => state.notice.set(Some(e.to_string())),
+            }
+        });
+    };
+
     let toggle_delete = move |_| {
         if let Some((row, _)) = selected.get_untracked() {
             pending.update(|p| {
@@ -435,7 +535,14 @@ pub fn Results(
                     }).collect_view()
                 }}
             </div>
-            <div class="grid" node_ref=viewport on:scroll=on_scroll role="grid">
+            <div class="grid" node_ref=viewport on:scroll=on_scroll role="grid" tabindex="0"
+                on:keydown=move |ev: web_sys::KeyboardEvent| {
+                    let typing = editing.get_untracked().is_some() || editing_new.get_untracked().is_some();
+                    if !typing && (ev.ctrl_key() || ev.meta_key()) && ev.key().eq_ignore_ascii_case("c") {
+                        ev.prevent_default();
+                        copy(CopyFormat::Tsv);
+                    }
+                }>
                 {move || {
                     let st = status.get();
                     let error = st.as_ref().and_then(|s| s.error.clone());
@@ -469,6 +576,54 @@ pub fn Results(
                     let edits = pending.get();
                     let sel = selected.get();
                     let open = editing.get();
+                    let open_new = editing_new.get();
+                    let area = selection();
+                    let ncols = s.columns.len();
+                    let in_area = move |i: u64, c: usize| area.is_some_and(|((r0, r1), (c0, c1))| (r0..=r1).contains(&i) && (c0..=c1).contains(&c));
+                    // Rows to add, above the others so they are seen.
+                    let new_rows = edits.inserts.iter().enumerate().map(|(n, row)| {
+                        let cells = (0..ncols).map(|c| {
+                            let may_edit = can_edit.get(c).copied().unwrap_or(false);
+                            if open_new == Some((n, c)) {
+                                return view! {
+                                    <td class="editing">
+                                        <input class="cell-input" aria-label="Value for the new row" prop:value=draft.get_untracked()
+                                            on:input=move |ev| draft.set(event_target_value(&ev))
+                                            on:keydown=move |ev: web_sys::KeyboardEvent| match ev.key().as_str() {
+                                                "Enter" => { ev.prevent_default(); commit_new(n, c); }
+                                                "Escape" => editing_new.set(None),
+                                                _ => {}
+                                            }
+                                            on:blur=move |_| commit_new(n, c) />
+                                    </td>
+                                }.into_any();
+                            }
+                            let (label, faint) = match (may_edit, new_value(row, c)) {
+                                (false, _) => ("".to_owned(), true),
+                                (true, None) => ("default".to_owned(), true),
+                                (true, Some(None)) => ("NULL".to_owned(), true),
+                                (true, Some(Some(t))) => (t, false),
+                            };
+                            let start = if faint { String::new() } else { label.clone() };
+                            view! {
+                                <td class:null=faint class:changed=!faint
+                                    on:dblclick=move |_| if may_edit {
+                                        draft.set(start.clone());
+                                        editing_new.set(Some((n, c)));
+                                        focus_cell_editor();
+                                    }>{label}</td>
+                            }.into_any()
+                        }).collect_view();
+                        view! {
+                            <tr class="new-row">
+                                <td class="rownum">
+                                    <button class="remove-new" aria-label="Remove this new row" title="Remove this new row"
+                                        on:click=move |_| { editing_new.set(None); pending.update(|p| { if n < p.inserts.len() { p.inserts.remove(n); } }); }>"×"</button>
+                                </td>
+                                {cells}
+                            </tr>
+                        }
+                    }).collect_view();
                     view! {
                         <table>
                             <thead><tr>
@@ -478,12 +633,19 @@ pub fn Results(
                                 }).collect_view()}
                             </tr></thead>
                             <tbody>
+                                {new_rows}
                                 <tr class="spacer-row"><td style:height=format!("{}px", first as f64 * ROW)></td></tr>
                                 {rows.into_iter().map(|(i, cells)| {
                                     let deleted = edits.deletes.contains(&i);
                                     view! {
                                         <tr class:deleted=deleted>
-                                            <td class="rownum" on:click=move |_| selected.set(Some((i, 0)))>{(i + 1).to_string()}</td>
+                                            <td class="rownum" on:click=move |ev| {
+                                                // The row number selects the whole row; with shift, the rows up to it.
+                                                if !(ev.shift_key() && anchor.get_untracked().is_some()) {
+                                                    anchor.set(Some((i, 0)));
+                                                }
+                                                selected.set(Some((i, ncols.saturating_sub(1))));
+                                            }>{(i + 1).to_string()}</td>
                                             {match cells {
                                                 Some(cells) => cells.into_iter().enumerate().map(|(c, cell)| {
                                                     let num = numeric.get(c).copied().unwrap_or(false);
@@ -495,6 +657,7 @@ pub fn Results(
                                                     };
                                                     let shown = (!null).then(|| text.clone());
                                                     let is_sel = sel == Some((i, c));
+                                                    let inside = !is_sel && in_area(i, c);
                                                     let may_edit = can_edit.get(c).copied().unwrap_or(false) && !deleted;
                                                     if open == Some((i, c)) {
                                                         let (on_key, on_blur) = (shown.clone(), shown);
@@ -514,9 +677,9 @@ pub fn Results(
                                                     let start_text = text.clone();
                                                     let label = if null { "NULL".to_owned() } else { text.clone() };
                                                     view! {
-                                                        <td class:num=num class:null=null class:changed=changed.is_some() class:sel=is_sel
+                                                        <td class:num=num class:null=null class:changed=changed.is_some() class:sel=is_sel class:inrange=inside
                                                             title=if null { String::new() } else { text }
-                                                            on:click=move |_| selected.set(Some((i, c)))
+                                                            on:click=move |ev| pick_cell(&ev, (i, c))
                                                             on:dblclick=move |_| if may_edit { start_edit(i, c, start_text.clone()) }>
                                                             {label}
                                                         </td>
@@ -561,6 +724,25 @@ pub fn Results(
                     (None, None) => ().into_any(),
                 })}
                 <span class="spacer" style:flex="1"></span>
+                {move || selection().map(|_| view! {
+                    <select class="btn small copy-as" aria-label="Copy the selection as" on:change=move |ev| {
+                        let v = event_target_value(&ev);
+                        if let Some(f) = CopyFormat::ALL.iter().find(|f| f.label() == v) {
+                            copy(*f);
+                        }
+                        // Back to the label, so the same format can be picked again.
+                        use wasm_bindgen::JsCast;
+                        if let Some(el) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlSelectElement>().ok()) {
+                            el.set_selected_index(0);
+                        }
+                    }>
+                        <option selected disabled>"Copy as…"</option>
+                        {CopyFormat::ALL.iter().map(|f| view! { <option>{f.label()}</option> }).collect_view()}
+                    </select>
+                })}
+                {move || info.with(|i| i.as_ref().is_some_and(|i| i.table.is_some())).then(|| view! {
+                    <button class="btn small add-row" on:click=add_row>"Add row"</button>
+                })}
                 {move || {
                     let row_selected = selected.get().is_some() && info.with(|i| i.as_ref().is_some_and(|i| i.table.is_some()));
                     row_selected.then(|| {
@@ -575,7 +757,7 @@ pub fn Results(
                     let n = pending.with(change_count);
                     (n > 0).then(|| view! {
                         <span class="pending">{if n == 1 { "1 change".to_owned() } else { format!("{n} changes") }}</span>
-                        <button class="btn small" on:click=move |_| { pending.set(RowEdits::default()); editing.set(None); }>"Discard"</button>
+                        <button class="btn small" on:click=move |_| { pending.set(RowEdits::default()); editing.set(None); editing_new.set(None); }>"Discard"</button>
                         <button class="btn small primary" on:click=review>"Review changes"</button>
                     })
                 }}
@@ -613,6 +795,7 @@ mod tests {
                 cell(2, 1, Some("b")),
             ],
             deletes: vec![],
+            inserts: vec![],
         };
         assert_eq!(pending_value(&e, 1, 0), Some(None));
         assert_eq!(pending_value(&e, 2, 1), Some(Some("b".into())));
@@ -674,6 +857,20 @@ mod tests {
     }
 
     #[test]
+    fn a_shift_click_selects_the_rectangle_between() {
+        assert_eq!(rectangle((5, 3), (2, 1)), ((2, 5), (1, 3)));
+        assert_eq!(rectangle((1, 0), (1, 0)), ((1, 1), (0, 0)));
+    }
+
+    #[test]
+    fn new_rows_show_the_last_value_typed() {
+        let row = vec![(1, Some("a".into())), (2, None), (1, Some("b".into()))];
+        assert_eq!(new_value(&row, 1), Some(Some("b".into())));
+        assert_eq!(new_value(&row, 2), Some(None));
+        assert_eq!(new_value(&row, 0), None);
+    }
+
+    #[test]
     fn changes_count_cells_and_deleted_rows_once() {
         let e = RowEdits {
             cells: vec![
@@ -682,6 +879,7 @@ mod tests {
                 cell(3, 0, Some("c")),
             ],
             deletes: vec![3, 4, 4],
+            inserts: vec![],
         };
         // Row 1's cell, and rows 3 and 4 (row 3's cell goes with it).
         assert_eq!(change_count(&e), 3);

@@ -68,3 +68,12 @@ pub async fn save_file(title: &str, name: &str) -> Option<String> {
         .ok()
         .flatten()
 }
+
+/// Puts `text` on the system clipboard; `false` when the webview refused.
+pub async fn to_clipboard(text: &str) -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let promise = window.navigator().clipboard().write_text(text);
+    wasm_bindgen_futures::JsFuture::from(promise).await.is_ok()
+}

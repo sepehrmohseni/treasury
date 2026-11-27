@@ -178,6 +178,48 @@ mod desktop {
         assert_eq!(s.text(&s.wait(&cell(1, 2), 10)), "deux");
         shot("7-after");
 
+        // Copy: a click, then a shift-click, selects a rectangle; "Copy as" puts it on the
+        // clipboard in the format picked.
+        s.click_css(&cell(1, 1));
+        s.script_on(
+            &s.wait(&cell(1, 2), 10),
+            "arguments[0].dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))",
+        );
+        s.script_on(
+            &s.wait(&shown(".result-foot .copy-as"), 10),
+            "arguments[0].value = 'CSV'; \
+             arguments[0].dispatchEvent(new Event('change', { bubbles: true }))",
+        );
+        // The notice comes once the clipboard took the text. WebKit lets a page write to the
+        // clipboard but not read it back, so the text itself is checked in the runtime's tests.
+        s.wait_text(".statusbar", "Copied 1 row as CSV.", 10);
+
+        // A new row, typed in at the top of the grid, is saved with the other changes.
+        s.click_css(&shown(".result-foot .add-row"));
+        for (column, value) in [(2, "7"), (3, "seven")] {
+            let cell = s.wait(
+                &shown(&format!(".grid tr.new-row td:nth-child({column})")),
+                10,
+            );
+            s.double_click(&cell);
+            let input = s.wait(".cell-input", 10);
+            s.script_on(
+                &input,
+                &format!(
+                    "arguments[0].value = '{value}'; \
+                     arguments[0].dispatchEvent(new Event('input', {{ bubbles: true }}))"
+                ),
+            );
+            s.keys(&input, &key::ENTER.to_string());
+        }
+        s.wait_text(&shown(".result-foot .pending"), "1 change", 10);
+        s.click_css(&shown(".result-foot .btn.primary"));
+        let review = s.wait_text(".dialog .statements", "INSERT INTO", 30);
+        assert!(review.contains("'seven'"), "{review}");
+        s.click_css(".dialog .btn.primary");
+        s.wait_text(".statusbar", "Saved. 1 row changed.", 30);
+        s.wait_text(&shown(".grid table"), "seven", 30);
+
         // The tree: a table double-clicked shows its rows, in a tab of its own.
         s.click(&s.wait_item(".tree .item", "public", 10));
         s.click(&s.wait_item(".tree .item", "Tables", 10));
@@ -359,7 +401,7 @@ mod desktop {
         s.click_css(".dialog .btn.primary");
         s.wait_text(".statusbar", "Writes unlocked for 15 minutes", 30);
         run(&s, "DELETE FROM smoke");
-        s.wait_text(".dialog", "It changes 1 row", 30);
+        s.wait_text(".dialog", "It changes 2 rows", 30);
         let typed = s.wait("#gd-name", 10);
         s.keys(&typed, "smoke-prod");
         s.wait_script(
@@ -368,7 +410,7 @@ mod desktop {
         );
         shot("17-type-the-name");
         s.click_css(".dialog .btn.primary");
-        s.wait_text(&shown(".grid .message"), "1 row changed", 30);
+        s.wait_text(&shown(".grid .message"), "2 rows changed", 30);
 
         // Production connections keep no history unless their settings say so.
         s.click_css(".side-views .view-history");
@@ -447,7 +489,7 @@ mod desktop {
              !== 'rgb(255, 255, 255)'",
             10,
         );
-        s.wait_text(&shown(".result-tabs"), "1 row changed", 10);
+        s.wait_text(&shown(".result-tabs"), "2 rows changed", 10);
         shot("19-dark");
         s.click_css(".brand .settings");
         s.wait("#st-theme", 10);
