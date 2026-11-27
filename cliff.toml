@@ -8,9 +8,11 @@ header = """
 
 Notable changes to Treasury, grouped as Added, Changed and Fixed. Versions follow Semantic
 Versioning.
-
 """
+# The blank line that starts each version also separates it from the one below; `trim` would
+# drop one at the end.
 body = """
+
 {% if version %}\
     ## {{ version | trim_start_matches(pat="v") }} ({{ timestamp | date(format="%Y-%m-%d") }})
 {% else %}\
