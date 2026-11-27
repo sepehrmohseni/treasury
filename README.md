@@ -27,8 +27,8 @@ the [project page](https://sepehrmohseni.github.io/treasury/) and with each
   selection as TSV, CSV, JSON, Markdown or INSERT statements.
 - Edit, add and delete the rows of a result that comes from one table, edit the documents a
   MongoDB find returned, and edit what a Redis key holds (hash fields, set and sorted set
-  members, list entries, a string's value). Changes collect in the grid, and nothing is saved
-  until you have read the statements they become; they are saved together.
+  members, list entries, a string's value) and when it expires. Changes collect in the grid, and
+  nothing is saved until you have read the statements they become; they are saved together.
 - Export a result to CSV, JSON, NDJSON or Parquet. Export streams to the file.
 
 The app is a [Tauri](https://tauri.app) window around the Rust core; its interface is written in

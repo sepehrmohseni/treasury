@@ -1,11 +1,10 @@
 # Roadmap
 
-The first published release, 0.1.1, is a database client for everyday work on PostgreSQL, MySQL,
-MariaDB, SQL Server, MongoDB, Redis and Valkey: connect, browse, query in tabs, read results,
-edit rows and export them, with the guardrails around every statement. The
-[README](../README.md) lists what it does. Everything below comes after it, roughly in this order.
-Nothing here is promised for a date; each item ships when it is finished and tested, and the
-list changes as people ask for things.
+Treasury 0.1.2 is a database client for everyday work on PostgreSQL, MySQL, MariaDB, SQL Server,
+MongoDB, Redis and Valkey: connect, browse, query in tabs, read results, edit rows and export them,
+with the guardrails around every statement. The [README](../README.md) lists what it does.
+Everything below comes after it, roughly in this order. Nothing here is promised for a date; each
+item ships when it is finished and tested, and the list changes as people ask for things.
 
 Ideas and requests are welcome as [issues](https://github.com/sepehrmohseni/treasury/issues).
 
@@ -13,7 +12,6 @@ Ideas and requests are welcome as [issues](https://github.com/sepehrmohseni/trea
 
 - Density and font size in Settings.
 - An inspector for the selected row or object, with its DDL.
-- A Redis key's expiry, shown and set from the grid.
 - The object tree reading itself again after a statement changes the schema.
 
 ## More engines
