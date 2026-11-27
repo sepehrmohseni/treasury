@@ -1,6 +1,6 @@
 # Roadmap
 
-Treasury 0.1.2 is a database client for everyday work on PostgreSQL, MySQL, MariaDB, SQL Server,
+Treasury 0.1.3 is a database client for everyday work on PostgreSQL, MySQL, MariaDB, SQL Server,
 MongoDB, Redis and Valkey: connect, browse, query in tabs, read results, edit rows and export them,
 with the guardrails around every statement. The [README](../README.md) lists what it does.
 Everything below comes after it, roughly in this order. Nothing here is promised for a date; each
@@ -11,7 +11,8 @@ Ideas and requests are welcome as [issues](https://github.com/sepehrmohseni/trea
 ## In the workspace
 
 - Density and font size in Settings.
-- An inspector for the selected row or object, with its DDL.
+- An inspector beside the grid for the selected row.
+- A filter and sort for a table's data, applied by the server.
 - The object tree reading itself again after a statement changes the schema.
 
 ## More engines

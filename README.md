@@ -15,8 +15,11 @@ the [project page](https://sepehrmohseni.github.io/treasury/) and with each
 - Add connections by hand, from a connection string, or by importing the export files of other
   clients. Passwords go to the system keychain, never to a settings file. SSH tunnels (with a
   jump host), client certificates and a custom CA are set in the connection form.
-- Browse databases, schemas, tables and collections, or Redis keys grouped by `:`, in a tree that
-  loads as you open it.
+- Browse every connection in one navigator tree: expand a connection to open it and see its
+  databases, schemas, tables, views, functions and indexes, or its Redis keys grouped by `:`.
+  Several connections can be open at once; right-click any node for what it can do.
+- Double-click a table, view or collection to open its editor: its columns, indexes, foreign
+  keys, DDL and size, and its rows in an editable grid.
 - Work in several tabs per connection, kept with their text across restarts, and save tabs as
   queries in folders. Search the history of what ran on each connection.
 - Write statements in an editor that highlights them and suggests names; run the one under the
