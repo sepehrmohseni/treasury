@@ -7,6 +7,7 @@ pub mod classify;
 mod count;
 pub mod dialect;
 mod edit;
+pub mod format;
 mod functions;
 pub mod highlight;
 mod limit;
