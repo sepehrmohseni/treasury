@@ -7,6 +7,34 @@ Versioning.
 
 ### Added
 
+- app: Several editor tabs per connection, and saved queries
+- app: Search the history of a connection and open what ran
+- sql: Lay statements out for reading without changing them
+- app: Format the selection or the tab, as an edit Ctrl+Z undoes
+- runtime: Read a statement to its end, so a script runs in order
+- app: Run every statement of a tab, one after another
+- sql: Find the tables a statement names, and quote names only when needed
+- runtime: A catalog of each connection's tables, views and collections
+- app: Suggest table, column and keyword names as a statement is typed
+- app: A command palette for connections, tables, saved queries and actions
+- app: SSH tunnels, certificates and the sign-in method in the connection form
+- export: Markdown tables, and tab-separated values without a header
+- runtime: Copy ranges of a result, add rows, and edit MongoDB documents
+- app: Select and copy ranges of the grid, and add rows in it
+- redis: The Redis and Valkey driver, for one server or through Sentinel
+- app: Redis and Valkey connections, keys in the tree
+- redis: Redis Cluster, and pages read only as the result asks for them
+- app: Set up a Redis Cluster in the connection form, by its nodes
+
+### Fixed
+
+- store: Leave rows sealed under another key out of lists
+- runtime: Record each statement as it starts, and complete it at the end
+- app: Deleting a connection removes its history too
+## 0.1.0 (2026-11-27)
+
+### Added
+
 - Add the Treasury mark and app icon sources
 - core: Add value model, settings, driver traits and result cursor
 - core: Enforce production guardrails before statements run
