@@ -76,6 +76,7 @@ pub async fn delete_connection(state: State<'_, AppState>, id: ConnectionId) -> 
     rt.disconnect(&id).await;
     rt.secrets_of(&id).clear()?;
     rt.store().close_tabs_of(&id)?;
+    rt.store().purge_history(Some(&id))?;
     rt.store()
         .delete_connection(&id)
         .map_err(|e| Error::internal(e.to_string()))
