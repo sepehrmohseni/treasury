@@ -77,7 +77,9 @@ The page at [sepehrmohseni.github.io/treasury](https://sepehrmohseni.github.io/t
 plain HTML and CSS in `site/`. Its statement table comes from the analyzer and guardrails, and a
 test fails when the page and the code disagree. After changing either, print the new rows with
 `scripts/docker-check.sh -- cargo run -q -p treasury-tests --example site-statements` and put
-them between the `statements` markers in `site/index.html`.
+them between the `statements` markers in `site/index.html`. The downloads, one card per platform
+for the latest version and a list of every version, are filled in from the published releases
+when the page is built (`scripts/site-downloads.py`, tested by `scripts/test_site_downloads.py`).
 
 ## License
 

@@ -368,21 +368,218 @@ table {
   color: var(--muted);
 }
 
-/* Downloads */
+/* Downloads: the latest version as one card per platform, then every version. */
 
-.downloads td.size {
-  color: var(--muted);
-  font: 400 0.85rem/1.6 var(--mono);
+.release-head {
+  margin: 0 0 1rem;
+  font-weight: 600;
+}
+
+.release-head .when {
   white-space: nowrap;
 }
 
-.downloads a {
-  font-family: var(--mono);
-  font-size: 0.9rem;
+.platforms {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0 2rem;
+}
+
+.platform {
+  padding: 1rem 0 1.25rem;
+  border-top: 1px solid var(--rule-strong);
+}
+
+.platform h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.platform h3 .detail {
+  margin-left: 0.35rem;
+  font: 500 0.72rem/1.4 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.get {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.6rem;
+  margin-top: 0.9rem;
+  padding: 0.55rem 0.95rem;
+  border-radius: 3px;
+  background: var(--green);
+  color: var(--on-green);
+  font-weight: 600;
+  font-size: 0.95rem;
+  text-decoration: none;
+}
+
+.get:hover {
+  background: #17442f;
+}
+
+.get:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 3px;
+}
+
+.get .size {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.size {
+  font: 400 0.8rem/1.6 var(--mono);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.also {
+  margin: 0.8rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.92rem;
+}
+
+.also li + li {
+  margin-top: 0.2rem;
+}
+
+.platform .note {
+  margin: 0.8rem 0 0;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+.release-links a + a {
+  margin-left: 1.25rem;
 }
 
 .install-notes {
   margin-top: 2rem;
+}
+
+.versions-head {
+  margin-top: 3.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule-strong);
+}
+
+.versions-head h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 650;
+}
+
+.versions-head p {
+  margin: 0.3rem 0 0;
+  max-width: 40rem;
+  color: var(--muted);
+}
+
+.versions {
+  margin-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+
+.version {
+  border-bottom: 1px solid var(--rule);
+}
+
+.version summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.version summary::-webkit-details-marker {
+  display: none;
+}
+
+.version summary::before {
+  content: "";
+  flex: none;
+  width: 0.45rem;
+  height: 0.45rem;
+  border: solid var(--muted);
+  border-width: 0 1.5px 1.5px 0;
+  transform: translateY(-0.1rem) rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+
+.version[open] summary::before {
+  transform: translateY(-0.2rem) rotate(45deg);
+}
+
+.version summary:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
+
+.version .number {
+  font: 500 1rem/1.4 var(--mono);
+}
+
+.version .pill {
+  margin-right: 0;
+}
+
+.version .date {
+  margin-left: auto;
+  font: 400 0.85rem/1.4 var(--mono);
+  color: var(--muted);
+}
+
+.version-files {
+  margin: 0 0 0 1.2rem;
+}
+
+.version-files > div {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr);
+  gap: 0.25rem 1.5rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--rule);
+}
+
+.version-files dt {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.version-files dd {
+  margin: 0;
+}
+
+.files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.files a {
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.version .release-links {
+  margin: 0.4rem 0 1rem 1.2rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .version summary::before {
+    transition: none;
+  }
 }
 
 /* Engine status */
@@ -502,6 +699,10 @@ table {
     grid-template-columns: 1fr;
   }
 
+  .platforms {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .facts {
     grid-template-columns: 1fr;
   }
@@ -589,5 +790,21 @@ table {
 
   .status-table tbody th {
     white-space: normal;
+  }
+
+  .platforms {
+    grid-template-columns: 1fr;
+  }
+
+  .version-files {
+    margin-left: 0;
+  }
+
+  .version-files > div {
+    grid-template-columns: 1fr;
+  }
+
+  .version .release-links {
+    margin-left: 0;
   }
 }
