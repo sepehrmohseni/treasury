@@ -3,6 +3,16 @@
 Notable changes to Treasury, grouped as Added, Changed and Fixed. Versions follow Semantic
 Versioning.
 
+## 0.1.1 (2026-11-27)
+
+### Added
+
+- redis: Edit hashes, sets, sorted sets, lists and strings in the grid
+
+### Fixed
+
+- release: Collect the packages in a folder the repository does not have
+
 ## 0.1.0 (2026-11-27)
 
 ### Added
