@@ -1,9 +1,9 @@
 # Treasury
 
-Treasury is an open-source database client for PostgreSQL, MySQL, MariaDB, SQL Server and
-MongoDB, with a desktop app and a command line tool. It reads each statement before the server
-does: it knows which ones write, shows how many rows an UPDATE or DELETE would change, and keeps
-production connections read-only until you unlock them.
+Treasury is an open-source database client for PostgreSQL, MySQL, MariaDB, SQL Server, MongoDB,
+Redis and Valkey, with a desktop app and a command line tool. It reads each statement before the
+server does: it knows which ones write, shows how many rows an UPDATE or DELETE would change, and
+keeps production connections read-only until you unlock them.
 
 It has no account, no paid tier and no telemetry. Downloads for Linux, macOS and Windows are on
 the [project page](https://sepehrmohseni.github.io/treasury/) and with each
@@ -13,16 +13,22 @@ the [project page](https://sepehrmohseni.github.io/treasury/) and with each
 ## Desktop app
 
 - Add connections by hand, from a connection string, or by importing the export files of other
-  clients. Passwords go to the system keychain, never to a settings file.
-- Browse databases, schemas, tables and collections in a tree that loads as you open it.
-- Write statements in an editor that highlights them, and run the one under the cursor with
-  Ctrl+Enter. Plain SELECTs get a 1,000-row limit unless you turn it off.
-- Read results in a grid that only fetches the rows in view, so large results stay fast.
-- Edit the rows of a SQL result that comes from one table. Changes collect in the grid, and
-  nothing is saved until you have read the statements they become; they are saved in one
-  transaction.
+  clients. Passwords go to the system keychain, never to a settings file. SSH tunnels (with a
+  jump host), client certificates and a custom CA are set in the connection form.
+- Browse databases, schemas, tables and collections, or Redis keys grouped by `:`, in a tree that
+  loads as you open it.
+- Work in several tabs per connection, kept with their text across restarts, and save tabs as
+  queries in folders. Search the history of what ran on each connection.
+- Write statements in an editor that highlights them and suggests names; run the one under the
+  cursor with Ctrl+Enter, or all of them in turn with Shift+Ctrl+Enter. Plain SELECTs get a
+  1,000-row limit unless you turn it off. Ctrl+K finds connections, tables, saved queries and
+  actions.
+- Read results in a grid that only fetches the rows in view, so large results stay fast; copy a
+  selection as TSV, CSV, JSON, Markdown or INSERT statements.
+- Edit, add and delete the rows of a result that comes from one table, and edit the documents a
+  MongoDB find returned. Changes collect in the grid, and nothing is saved until you have read
+  the statements they become; they are saved together.
 - Export a result to CSV, JSON, NDJSON or Parquet. Export streams to the file.
-- Connect through SSH tunnels, and decide about each new SSH host key yourself.
 
 The app is a [Tauri](https://tauri.app) window around the Rust core; its interface is written in
 Rust too ([ADR 0011](docs/decisions/0011-ui-in-rust-with-leptos.md)).

@@ -1,7 +1,8 @@
 # Roadmap
 
-The first release, 0.1.0, is a database client for everyday work: connect, browse, query, read
-results, edit rows and export them, with the guardrails around every statement. The
+The first release, 0.1.0, is a database client for everyday work on PostgreSQL, MySQL,
+MariaDB, SQL Server, MongoDB, Redis and Valkey: connect, browse, query in tabs, read results,
+edit rows and export them, with the guardrails around every statement. The
 [README](../README.md) lists what it does. Everything below comes after it, roughly in this order.
 Nothing here is promised for a date; each item ships when it is finished and tested, and the
 list changes as people ask for things.
@@ -10,24 +11,13 @@ Ideas and requests are welcome as [issues](https://github.com/sepehrmohseni/trea
 
 ## In the workspace
 
-- Several editor tabs per connection, kept with their text across restarts.
-- Saved queries in folders.
-- The query history in a panel, searchable. History is already recorded and encrypted; this is
-  the view of it.
-- Density and font size in Settings. Theme, the default row limit, history, tips, the
-  walkthrough and the version check are already there.
-- A command palette (Ctrl+K) for connections, tables and settings.
-- Completion of table and column names, formatting, run all statements.
+- Density and font size in Settings.
 - An inspector for the selected row or object, with its DDL.
-- Inserting rows from the grid, and editing MongoDB documents. Updating and deleting rows of SQL
-  tables is in 0.1.0.
-- SSH tunnel and client certificate settings in the connection form. Imported connections keep
-  theirs already.
-- Copying cells and rows as TSV, CSV, JSON, Markdown or INSERT statements.
+- Editing Redis keys in the grid, and their expiry.
+- The object tree reading itself again after a statement changes the schema.
 
 ## More engines
 
-- Redis and Valkey: standalone, Sentinel and Cluster, with a key browser.
 - Cassandra and ScyllaDB.
 - Snowflake and Databricks SQL. Nothing that needs a running warehouse runs without asking.
 - Oracle, through Oracle Instant Client, and IBM Db2, through the IBM CLI driver.
