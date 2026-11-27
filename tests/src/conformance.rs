@@ -42,7 +42,8 @@ pub trait Fixture: Send + Sync {
     fn secrets(&self) -> Arc<dyn SecretSource>;
     /// Credentials the server rejects.
     fn wrong_secrets(&self) -> Arc<dyn SecretSource>;
-    /// A statement returning `n` rows of one integer column counting from 1.
+    /// A statement returning `n` rows of one integer column counting from 1 (or, where the
+    /// engine keeps only strings, the numbers as text).
     fn rows(&self, n: u64) -> String;
     /// A statement that runs for at least `secs` seconds.
     fn slow(&self, secs: u32) -> String;
@@ -310,8 +311,10 @@ pub async fn stream_million_rows(f: &dyn Fixture) -> Result<(), String> {
         }
     }
     ensure!(start == N, "read {start} rows, expected {N}");
+    // Redis keeps strings, so its rows are the numbers as text.
     ensure!(
-        matches!(last, Value::I64(n) if n == 1_000_000),
+        matches!(&last, Value::I64(n) if *n == 1_000_000)
+            || matches!(&last, Value::Text(t) if t == "1000000"),
         "last row was {last:?}"
     );
     if let (Some(b), Some(steady), true) = (before, steady, peak_rss > 0) {

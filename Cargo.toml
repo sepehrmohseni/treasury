@@ -23,6 +23,7 @@ treasury-driver-postgres = { path = "crates/driver-postgres" }
 treasury-driver-mysql = { path = "crates/driver-mysql" }
 treasury-driver-mssql = { path = "crates/driver-mssql" }
 treasury-driver-mongo = { path = "crates/driver-mongo" }
+treasury-driver-redis = { path = "crates/driver-redis" }
 treasury-runtime = { path = "crates/runtime" }
 treasury-ipc = { path = "crates/ipc" }
 treasury-tests = { path = "tests" }

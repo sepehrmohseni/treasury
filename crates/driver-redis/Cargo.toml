@@ -1,0 +1,26 @@
+[package]
+name = "treasury-driver-redis"
+description = "The Redis and Valkey driver: standalone, Sentinel and Cluster, with a key browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+treasury-core.workspace = true
+treasury-tunnel.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+secrecy.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros", "net"] }
+# TLS for one server goes through Treasury's own bridge; Sentinel and Cluster dial nodes the
+# servers name, so there the client's rustls TLS (with the workspace's ring provider) is used.
+redis = { version = "1.8.3", default-features = false, features = ["tokio-comp", "tokio-rustls-comp", "cluster-async", "sentinel", "acl", "streams"] }
+
+[lints]
+workspace = true
