@@ -209,6 +209,12 @@ pub fn status(state: State<'_, AppState>, result: u64) -> Result<ExecutionStatus
     state.runtime.status(result)
 }
 
+/// Reads statement `result` to its end and returns how it ended.
+#[tauri::command]
+pub async fn finish(state: State<'_, AppState>, result: u64) -> Result<ExecutionStatus> {
+    state.runtime.finish(result).await
+}
+
 #[tauri::command]
 pub async fn cancel(state: State<'_, AppState>, result: u64) -> Result<()> {
     state.runtime.cancel(result).await

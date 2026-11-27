@@ -197,6 +197,14 @@ impl Execution {
         }
     }
 
+    /// Reads everything the statement still has to send, so it has run to its end, as each
+    /// statement of a script must before the next one starts. Rows go to the page store, and its
+    /// spill file, as they do when shown. A failure ends up in [`Execution::status`].
+    pub async fn read_to_end(&self) -> Result<()> {
+        while self.pull_one().await? {}
+        self.result_of_stream()
+    }
+
     /// Up to `count` rows of result set `set` starting at row `start`, fetching from the server
     /// as far as needed.
     pub async fn window(&self, set: usize, start: u64, count: usize) -> Result<Window> {

@@ -103,6 +103,35 @@ async fn reads_run_and_are_remembered() {
     );
 }
 
+/// A script runs one statement after another, each read to its end first.
+#[tokio::test]
+async fn a_statement_can_be_read_to_its_end() {
+    let f = runtime();
+    let c = open(&f.rt, Environment::Development).await;
+    let p = f.rt.prepare(&c.id, "rows 2500").await.unwrap();
+    let rid =
+        f.rt.run(&c.id, "rows 2500", p.token, None, false)
+            .await
+            .unwrap();
+    let status = f.rt.finish(rid).await.unwrap();
+    assert!(status.finished && status.error.is_none());
+    assert_eq!(status.sets[0].rows, 2500);
+    let h = &f.rt.store().history(Some(&c.id), None, 1).unwrap()[0];
+    assert_eq!((h.status, h.rows), (RunStatus::Ok, Some(2500)));
+    // All of it can still be read.
+    let w = f.rt.window(rid, 0, 2400, 200).await.unwrap();
+    assert_eq!(w.rows.len(), 100);
+
+    // A failure is in the status.
+    let p = f.rt.prepare(&c.id, "syntax x").await.unwrap();
+    let rid =
+        f.rt.run(&c.id, "syntax x", p.token, None, false)
+            .await
+            .unwrap();
+    let status = f.rt.finish(rid).await.unwrap();
+    assert!(status.finished && status.error.is_some());
+}
+
 /// The grid reads only the rows it shows, so most results are closed before their stream ends.
 #[tokio::test]
 async fn results_closed_before_the_end_are_remembered() {

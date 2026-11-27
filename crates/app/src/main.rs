@@ -91,6 +91,7 @@ fn main() {
             commands::run,
             commands::window,
             commands::status,
+            commands::finish,
             commands::cancel,
             commands::close_result,
             commands::edit_info,

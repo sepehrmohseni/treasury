@@ -578,6 +578,15 @@ impl Runtime {
         Ok(r.execution.status())
     }
 
+    /// Reads statement `rid` to its end, for running a script one statement after another, and
+    /// returns how it ended; a failure is in the status, not an error.
+    pub async fn finish(&self, rid: u64) -> Result<ExecutionStatus> {
+        let r = self.running(rid)?;
+        let _ = r.execution.read_to_end().await;
+        self.record(&r, false);
+        Ok(r.execution.status())
+    }
+
     /// The result cursor, for exports.
     pub fn execution(&self, rid: u64) -> Result<Arc<Execution>> {
         Ok(self.running(rid)?.execution.clone())
