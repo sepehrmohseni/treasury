@@ -35,6 +35,7 @@ const HINTS: &[&str] = &[
     "History on the left lists what ran on this connection; search it, or click one to open it.",
     "Shift+Ctrl+Enter runs every statement in the tab, one after another, each with its own result.",
     "Table and column names are suggested as you type; Ctrl+Space shows them without typing.",
+    "Ctrl+K finds any connection, table, saved query or action by part of its name.",
 ];
 
 pub fn dialect_of(engine: Engine) -> Option<SqlDialect> {
@@ -774,6 +775,18 @@ pub fn Workspace() -> impl IntoView {
             y,
         }));
     };
+    // What the command palette asks the editor to do.
+    Effect::new(move |_| {
+        let Some(command) = state.command.get() else {
+            return;
+        };
+        state.command.set(None);
+        request_animation_frame(move || match command {
+            crate::state::EditorCommand::RunAll => run_everything(),
+            crate::state::EditorCommand::Format => format_text(),
+        });
+    });
+
     // Names arriving from the app refresh the list while a word is being typed.
     Effect::new(move |_| {
         state.catalogs.track();

@@ -11,6 +11,7 @@ mod grid;
 mod history;
 mod home;
 mod ipc;
+mod palette;
 mod sidebar;
 mod state;
 mod tabs;

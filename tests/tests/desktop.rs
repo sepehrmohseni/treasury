@@ -310,6 +310,17 @@ mod desktop {
         s.keys(&editor, &key::ENTER.to_string());
         s.wait_text(".editor pre", "SELECT * FROM smoke WHERE name", 10);
         assert!(s.find(".completions").is_none());
+
+        // The command palette: Ctrl+K, a few letters of a table's name, Enter shows its rows.
+        s.keys(&editor, &format!("{}k{}", key::CONTROL, key::NULL));
+        let input = s.wait("#palette-input", 10);
+        s.keys(&input, "scrt");
+        s.wait_text(".palette-list li.on", "script_t", 30);
+        shot("14-palette");
+        s.keys(&input, &key::ENTER.to_string());
+        assert!(s.find(".palette").is_none());
+        s.wait_text(".tab-strip .etab.on", "script_t", 10);
+        s.wait_text(&shown(".result-foot"), "2 rows", 30);
         s.click_css(".side-views .view-connections");
 
         // A production connection opens read-only, refuses writes until they are unlocked, and
@@ -333,10 +344,10 @@ mod desktop {
         s.click_css(".dialog button[type=submit]");
         s.wait_text(".toolbar .title", "smoke-prod", 30);
         s.wait(".toolbar .badge.ro", 30);
-        shot("14-production");
+        shot("15-production");
         run(&s, "DELETE FROM smoke");
         s.wait_text(".dialog", "Unlock writes to run it", 30);
-        shot("15-refused");
+        shot("16-refused");
         s.click_css(".dialog .btn.primary");
         s.wait_text(".statusbar", "Writes unlocked for 15 minutes", 30);
         run(&s, "DELETE FROM smoke");
@@ -347,7 +358,7 @@ mod desktop {
             "return document.querySelector('.dialog .btn.primary').disabled === false",
             10,
         );
-        shot("16-type-the-name");
+        shot("17-type-the-name");
         s.click_css(".dialog .btn.primary");
         s.wait_text(&shown(".grid .message"), "1 row changed", 30);
 
@@ -379,10 +390,10 @@ mod desktop {
             10,
         );
         s.wait_text(&shown(".result-tabs"), "1 row changed", 10);
-        shot("17-dark");
+        shot("18-dark");
         s.click_css(".brand .settings");
         s.wait("#st-theme", 10);
-        shot("18-settings");
+        shot("19-settings");
         s.click_css(".dialog .walkthrough");
         s.wait_text(".tour", "Your first five minutes", 10);
 
@@ -399,7 +410,7 @@ mod desktop {
         s.click(&s.wait_item(".list > .item", "smoke", 30));
         s.wait_text(".statusbar", "PostgreSQL", 60);
         let strip = s.wait_text(".tab-strip", "Second tab", 30);
-        for title in ["Query 1", "smoke", "Query 2", "Query 3"] {
+        for title in ["Query 1", "smoke", "Query 2", "Query 3", "script_t"] {
             assert!(strip.contains(title), "{strip}");
         }
         s.click(&s.wait_item(".tab-strip .etab-title", "Query 2", 10));

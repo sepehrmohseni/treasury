@@ -44,6 +44,18 @@ pub fn App() -> impl IntoView {
     });
     state.reload_connections();
     crate::tabs::load();
+    // Ctrl+K (Cmd+K) opens the command palette from anywhere, and closes it again.
+    let _ = window_event_listener(leptos::ev::keydown, move |ev| {
+        if (ev.ctrl_key() || ev.meta_key()) && ev.key().eq_ignore_ascii_case("k") {
+            ev.prevent_default();
+            match state.dialog.get_untracked() {
+                Dialog::Palette => state.dialog.set(Dialog::None),
+                Dialog::None => state.dialog.set(Dialog::Palette),
+                // Another dialog is waiting for an answer.
+                _ => {}
+            }
+        }
+    });
     ipc::listen("host-key", move |event| {
         let payload = js_sys::Reflect::get(&event, &"payload".into()).unwrap_or(event);
         if let Ok(q) = serde_wasm_bindgen::from_value::<HostKeyQuestion>(payload) {

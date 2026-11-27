@@ -17,7 +17,7 @@ fn env_class(e: Environment) -> &'static str {
     }
 }
 
-fn env_label(e: Environment) -> &'static str {
+pub fn env_label(e: Environment) -> &'static str {
     match e {
         Environment::Local => "local",
         Environment::Development => "dev",

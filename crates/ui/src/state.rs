@@ -51,6 +51,8 @@ pub enum Dialog {
     DeleteQuery(SavedQueryView),
     /// Deleting the history of a connection.
     ClearHistory(ConnectionId),
+    /// The command palette.
+    Palette,
     /// Closing a tab that holds work not saved anywhere else.
     CloseTab {
         tab: String,
@@ -110,6 +112,13 @@ pub struct Script {
     pub limit: bool,
 }
 
+/// Something for the editor to do, asked for from outside it (the command palette).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditorCommand {
+    RunAll,
+    Format,
+}
+
 /// What the sidebar lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SideView {
@@ -152,6 +161,8 @@ pub struct Ui {
     pub history_rev: RwSignal<u64>,
     /// Scripts running, by tab.
     pub scripts: RwSignal<HashMap<String, Script>>,
+    /// Asks the editor to do something.
+    pub command: RwSignal<Option<EditorCommand>>,
     /// Each connection's tables, views and collections, once read.
     pub catalogs: RwSignal<HashMap<ConnectionId, CatalogView>>,
     /// Columns of tables, by connection and table, once read.
@@ -200,6 +211,7 @@ impl Ui {
             side_view: RwSignal::new(SideView::Connections),
             history_rev: RwSignal::new(0),
             scripts: RwSignal::new(HashMap::new()),
+            command: RwSignal::new(None),
             catalogs: RwSignal::new(HashMap::new()),
             table_columns: RwSignal::new(HashMap::new()),
             approved: RwSignal::new(None),

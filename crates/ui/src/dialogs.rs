@@ -52,6 +52,7 @@ pub fn Dialogs() -> impl IntoView {
         } => view! { <CloseTabDialog tab=tab unsaved_text=unsaved_text pending=pending /> }
             .into_any(),
         Dialog::Settings => view! { <SettingsDialog /> }.into_any(),
+        Dialog::Palette => view! { <crate::palette::Palette /> }.into_any(),
         Dialog::ReviewEdits {
             result,
             set,
