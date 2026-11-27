@@ -8515,7 +8515,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-app"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "secrecy",
@@ -8543,7 +8543,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -8565,7 +8565,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-core"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "chacha20poly1305",
@@ -8584,7 +8584,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-driver-mongo"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -8601,7 +8601,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-driver-mssql"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -8618,7 +8618,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-driver-mysql"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -8636,7 +8636,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-driver-postgres"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -8656,7 +8656,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-export"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -8672,7 +8672,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-import"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "aes",
  "cbc",
@@ -8691,7 +8691,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-ipc"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "treasury-core",
@@ -8699,7 +8699,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-runtime"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -8717,7 +8717,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-sql"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "proptest",
  "serde",
@@ -8728,7 +8728,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-store"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "proptest",
  "rmp-serde",
@@ -8745,7 +8745,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-tests"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -8770,7 +8770,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-tunnel"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "pkcs8",
@@ -8789,7 +8789,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-ui"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
@@ -8808,7 +8808,7 @@ dependencies = [
 
 [[package]]
 name = "treasury-vault"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "apple-native-keyring-store",
  "argon2",
@@ -9902,7 +9902,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "semver",
