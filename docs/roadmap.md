@@ -1,6 +1,6 @@
 # Roadmap
 
-The first release, 0.1.0, is a database client for everyday work on PostgreSQL, MySQL,
+The first published release, 0.1.1, is a database client for everyday work on PostgreSQL, MySQL,
 MariaDB, SQL Server, MongoDB, Redis and Valkey: connect, browse, query in tabs, read results,
 edit rows and export them, with the guardrails around every statement. The
 [README](../README.md) lists what it does. Everything below comes after it, roughly in this order.
@@ -13,7 +13,7 @@ Ideas and requests are welcome as [issues](https://github.com/sepehrmohseni/trea
 
 - Density and font size in Settings.
 - An inspector for the selected row or object, with its DDL.
-- Editing Redis keys in the grid, and their expiry.
+- A Redis key's expiry, shown and set from the grid.
 - The object tree reading itself again after a statement changes the schema.
 
 ## More engines
