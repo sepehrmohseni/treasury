@@ -15,7 +15,7 @@ mod desktop {
     use testcontainers::core::{IntoContainerPort, WaitFor};
     use testcontainers::runners::AsyncRunner;
     use testcontainers::{GenericImage, ImageExt};
-    use treasury_tests::docker::with_startup;
+    use treasury_tests::docker::{sshd_image, with_startup};
     use treasury_tests::webdriver::{Session, TauriDriver, key};
 
     const PASSWORD: &str = "desktop-password";
@@ -57,6 +57,14 @@ mod desktop {
         .expect("start postgres");
         let host = pg.get_host().await.unwrap().to_string();
         let port = pg.get_host_port_ipv4(5432.tcp()).await.unwrap();
+        // An SSH server that reaches the database on the containers' network.
+        let sshd = with_startup(sshd_image().await)
+            .start()
+            .await
+            .expect("start sshd");
+        let ssh_host = sshd.get_host().await.unwrap().to_string();
+        let ssh_port = sshd.get_host_port_ipv4(22.tcp()).await.unwrap();
+        let pg_inside = pg.get_bridge_ip_address().await.unwrap();
 
         // A fresh profile, so the run starts from the first-launch screen.
         let profile = tempfile::tempdir().unwrap();
@@ -368,6 +376,56 @@ mod desktop {
         assert!(history.contains("No statements have run"), "{history}");
         s.click_css(".side-views .view-connections");
 
+        // An SSH tunnel set up in the form, to the database as the SSH host reaches it; the
+        // host key is trusted when asked.
+        s.click_css(".side-actions .btn.primary");
+        let uri = s.wait("#cf-uri", 10);
+        s.keys(
+            &uri,
+            &format!("postgres://postgres:{PASSWORD}@{pg_inside}:5432/treasury?sslmode=disable"),
+        );
+        let name = s.wait("#cf-name", 10);
+        s.click(&name);
+        s.keys(&name, "via-ssh");
+        s.click_css("details.ssh > summary");
+        s.click_css("#cf-ssh-on");
+        s.keys(&s.wait("#cf-ssh-host", 10), &ssh_host);
+        let p = s.wait("#cf-ssh-port", 10);
+        s.script_on(
+            &p,
+            &format!(
+                "arguments[0].value = '{ssh_port}'; \
+                 arguments[0].dispatchEvent(new Event('input', {{ bubbles: true }}))"
+            ),
+        );
+        s.keys(&s.wait("#cf-ssh-user", 10), "treasury");
+        s.script_on(
+            &s.wait("#cf-ssh-auth", 10),
+            "arguments[0].value = 'Password'; \
+             arguments[0].dispatchEvent(new Event('change', { bubbles: true }))",
+        );
+        s.keys(&s.wait("#cf-ssh-secret", 10), "tunnel-password");
+        shot("18-ssh");
+        s.click_css(".dialog button[type=submit]");
+        s.wait_text(".dialog", "Unknown SSH host", 30);
+        s.click_css(".dialog .btn.primary");
+        s.wait_text(".toolbar .title", "via-ssh", 30);
+        s.wait_text(".statusbar", "PostgreSQL", 60);
+        run(&s, "SELECT inet_server_addr() AS server");
+        s.wait_text(&shown(".result-foot"), "1 row", 30);
+
+        // Deleting a connection asks first.
+        s.double_click(&s.wait_item(".list > .item", "via-ssh", 10));
+        s.click_css(".dialog .delete-connection");
+        s.wait_text(".dialog", "cannot be undone", 10);
+        s.click_css(".dialog .confirm-delete");
+        s.wait_script(
+            "return ![...document.querySelectorAll('.list > .item')].some(e => e.innerText.includes('via-ssh'))",
+            10,
+        );
+        s.click(&s.wait_item(".list > .item", "smoke-prod", 10));
+        s.wait_text(".toolbar .title", "smoke-prod", 30);
+
         // Tips can be put away; Settings switches the theme and brings the walkthrough back.
         s.click_css(".hint .no-tips");
         assert!(s.find(".hint").is_none());
@@ -390,10 +448,10 @@ mod desktop {
             10,
         );
         s.wait_text(&shown(".result-tabs"), "1 row changed", 10);
-        shot("18-dark");
+        shot("19-dark");
         s.click_css(".brand .settings");
         s.wait("#st-theme", 10);
-        shot("19-settings");
+        shot("20-settings");
         s.click_css(".dialog .walkthrough");
         s.wait_text(".tour", "Your first five minutes", 10);
 

@@ -4,7 +4,10 @@
 use crate::ipc;
 use crate::state::{Approved, Dialog, ui};
 use leptos::prelude::*;
-use treasury_core::config::{ConnectionConfig, Endpoint, Engine, Environment, SecretSlot, TlsMode};
+use treasury_core::config::{
+    AuthMethod, ConnectionConfig, Endpoint, Engine, Environment, SecretSlot, SshAuth, SshConfig,
+    SshHop, TlsMode,
+};
 use treasury_ipc::{ImportPreview, LiveView, Prepared, RowEdits, SavedQueryView, SecretInput};
 
 /// The engines this version connects to.
@@ -108,19 +111,194 @@ fn host_of(c: &ConnectionConfig) -> String {
     }
 }
 
+/// Which SSH host of a tunnel a part of the form edits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hop {
+    Target,
+    Jump,
+}
+
+fn hop_of(c: &ConnectionConfig, hop: Hop) -> Option<&SshHop> {
+    let ssh = c.ssh.as_ref()?;
+    match hop {
+        Hop::Target => Some(&ssh.target),
+        Hop::Jump => ssh.jump.as_ref(),
+    }
+}
+
+fn update_hop(c: &mut ConnectionConfig, hop: Hop, f: impl FnOnce(&mut SshHop)) {
+    if let Some(ssh) = c.ssh.as_mut() {
+        match hop {
+            Hop::Target => f(&mut ssh.target),
+            Hop::Jump => {
+                if let Some(j) = ssh.jump.as_mut() {
+                    f(j);
+                }
+            }
+        }
+    }
+}
+
+fn new_hop() -> SshHop {
+    SshHop {
+        host: String::new(),
+        port: 22,
+        user: String::new(),
+        auth: SshAuth::KeyFile {
+            path: std::path::PathBuf::new(),
+        },
+    }
+}
+
+/// A field holding a file's path, typed or picked with the system's file dialog.
+fn file_field(
+    id: &'static str,
+    label: &'static str,
+    get: impl Fn() -> Option<std::path::PathBuf> + Send + Sync + Copy + 'static,
+    set: impl Fn(Option<std::path::PathBuf>) + Send + Sync + Copy + 'static,
+) -> impl IntoView {
+    let pick = move |_| {
+        leptos::task::spawn_local(async move {
+            if let Some(path) = ipc::pick_file(label).await {
+                set(Some(path.into()));
+            }
+        });
+    };
+    view! {
+        <div class="field">
+            <label for=id>{label}</label>
+            <div class="row-file">
+                <input id=id autocomplete="off" spellcheck="false"
+                    prop:value=move || get().map(|p| p.display().to_string()).unwrap_or_default()
+                    on:input=move |ev| {
+                        let v = event_target_value(&ev);
+                        set((!v.trim().is_empty()).then(|| v.trim().into()));
+                    } />
+                <button type="button" class="btn small" on:click=pick>"Choose…"</button>
+            </div>
+        </div>
+    }
+}
+
+/// The fields of one SSH host: address, user, how to sign in, and the secret that takes.
+fn hop_fields(
+    cfg: RwSignal<ConnectionConfig>,
+    hop: Hop,
+    secret: RwSignal<String>,
+    saved: [bool; 2],
+) -> impl IntoView {
+    let prefix = match hop {
+        Hop::Target => "cf-ssh",
+        Hop::Jump => "cf-jump",
+    };
+    let id = move |what: &str| format!("{prefix}-{what}");
+    let get = move |f: fn(&SshHop) -> String| {
+        move || cfg.with(|c| hop_of(c, hop).map(f).unwrap_or_default())
+    };
+    let auth = move || cfg.with(|c| hop_of(c, hop).map(|h| h.auth.clone()));
+    let [saved_password, saved_passphrase] = saved;
+    view! {
+        <div class="field">
+            <label for=id("host")>{if hop == Hop::Target { "SSH host and port" } else { "Jump host and port" }}</label>
+            <div class="row2">
+                <input id=id("host") autocomplete="off" prop:value=get(|h| h.host.clone())
+                    on:input=move |ev| { let v = event_target_value(&ev); cfg.update(|c| update_hop(c, hop, |h| h.host = v)); } />
+                <input id=id("port") aria-label="SSH port" type="number" min="1" max="65535" prop:value=get(|h| h.port.to_string())
+                    on:input=move |ev| { let p = event_target_value(&ev).parse().unwrap_or(0); cfg.update(|c| update_hop(c, hop, |h| h.port = p)); } />
+            </div>
+        </div>
+        <div class="field">
+            <label for=id("user")>"SSH user"</label>
+            <input id=id("user") autocomplete="off" prop:value=get(|h| h.user.clone())
+                on:input=move |ev| { let v = event_target_value(&ev); cfg.update(|c| update_hop(c, hop, |h| h.user = v)); } />
+        </div>
+        <div class="field">
+            <label for=id("auth")>"Sign in with"</label>
+            <select id=id("auth") on:change=move |ev| {
+                let a = match event_target_value(&ev).as_str() {
+                    "Password" => SshAuth::Password,
+                    "SSH agent" => SshAuth::Agent,
+                    _ => SshAuth::KeyFile { path: std::path::PathBuf::new() },
+                };
+                cfg.update(|c| update_hop(c, hop, |h| h.auth = a));
+            }>
+                {["Key file", "Password", "SSH agent"].into_iter().map(|l| view! {
+                    <option selected=move || matches!((l, auth()), ("Key file", Some(SshAuth::KeyFile { .. })) | ("Password", Some(SshAuth::Password)) | ("SSH agent", Some(SshAuth::Agent)))>{l}</option>
+                }).collect_view()}
+            </select>
+        </div>
+        <Show when=move || matches!(auth(), Some(SshAuth::KeyFile { .. }))>
+            {file_field(
+                if hop == Hop::Target { "cf-ssh-key" } else { "cf-jump-key" },
+                "Private key",
+                move || cfg.with(|c| match hop_of(c, hop).map(|h| &h.auth) {
+                    Some(SshAuth::KeyFile { path }) if !path.as_os_str().is_empty() => Some(path.clone()),
+                    _ => None,
+                }),
+                move |p| cfg.update(|c| update_hop(c, hop, |h| h.auth = SshAuth::KeyFile { path: p.unwrap_or_default() })),
+            )}
+        </Show>
+        <Show when=move || !matches!(auth(), Some(SshAuth::Agent))>
+            <div class="field">
+                <label for=id("secret")>{move || if matches!(auth(), Some(SshAuth::Password)) { "SSH password" } else { "Key passphrase" }}</label>
+                <input id=id("secret") type="password" autocomplete="new-password"
+                    placeholder=move || {
+                        let saved = if matches!(auth(), Some(SshAuth::Password)) { saved_password } else { saved_passphrase };
+                        if saved { "Saved; leave empty to keep it" } else { "" }
+                    }
+                    prop:value=move || secret.get() on:input=move |ev| secret.set(event_target_value(&ev)) />
+            </div>
+        </Show>
+    }
+}
+
+/// The sign-in methods `engine` offers in this version, by label.
+fn auth_choices(engine: Engine) -> &'static [(&'static str, AuthMethod)] {
+    match engine {
+        Engine::SqlServer => &[("Password", AuthMethod::Password)],
+        Engine::MongoDb => &[
+            ("Password", AuthMethod::Password),
+            ("Client certificate", AuthMethod::ClientCertificate),
+            ("None", AuthMethod::None),
+        ],
+        _ => &[
+            ("Password", AuthMethod::Password),
+            ("Client certificate", AuthMethod::ClientCertificate),
+        ],
+    }
+}
+
 #[component]
 fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
     let state = ui();
     let existing = state
         .connections
         .with_untracked(|l| l.iter().any(|c| c.config.id == initial.id));
-    let has_password = state.connections.with_untracked(|l| {
+    let saved_slots = state.connections.with_untracked(|l| {
         l.iter()
             .find(|c| c.config.id == initial.id)
-            .is_some_and(|c| c.secrets.contains(&SecretSlot::Password))
+            .map(|c| c.secrets.clone())
+            .unwrap_or_default()
     });
+    let saved = move |slot: SecretSlot| saved_slots.contains(&slot);
+    let has_password = saved(SecretSlot::Password);
+    let saved_key = saved(SecretSlot::KeyPassphrase);
+    let saved_ssh = [
+        saved(SecretSlot::SshPassword),
+        saved(SecretSlot::SshKeyPassphrase),
+    ];
+    let saved_jump = [
+        saved(SecretSlot::JumpPassword),
+        saved(SecretSlot::JumpKeyPassphrase),
+    ];
+    let ssh_open = initial.ssh.is_some();
+    let certs_open = initial.tls.ca_file.is_some() || initial.tls.client_cert.is_some();
     let cfg = RwSignal::new(initial);
     let password = RwSignal::new(String::new());
+    let key_passphrase = RwSignal::new(String::new());
+    let ssh_secret = RwSignal::new(String::new());
+    let jump_secret = RwSignal::new(String::new());
+    let confirm_delete = RwSignal::new(false);
     let uri = RwSignal::new(String::new());
     let error = RwSignal::new(None::<String>);
 
@@ -174,10 +352,46 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
             error.set(Some(e.to_string()));
             return;
         }
-        let secrets = vec![SecretInput {
+        // Each secret the settings use, as typed; an empty one keeps what is saved.
+        let mut secrets = vec![SecretInput {
             slot: SecretSlot::Password,
             value: password.get_untracked(),
         }];
+        if c.tls.client_key.is_some() {
+            secrets.push(SecretInput {
+                slot: SecretSlot::KeyPassphrase,
+                value: key_passphrase.get_untracked(),
+            });
+        }
+        if let Some(ssh) = &c.ssh {
+            let slot = |auth: &SshAuth, password: SecretSlot, passphrase: SecretSlot| match auth {
+                SshAuth::Password => Some(password),
+                SshAuth::KeyFile { .. } => Some(passphrase),
+                SshAuth::Agent => None,
+            };
+            if let Some(s) = slot(
+                &ssh.target.auth,
+                SecretSlot::SshPassword,
+                SecretSlot::SshKeyPassphrase,
+            ) {
+                secrets.push(SecretInput {
+                    slot: s,
+                    value: ssh_secret.get_untracked(),
+                });
+            }
+            if let Some(s) = ssh.jump.as_ref().and_then(|j| {
+                slot(
+                    &j.auth,
+                    SecretSlot::JumpPassword,
+                    SecretSlot::JumpKeyPassphrase,
+                )
+            }) {
+                secrets.push(SecretInput {
+                    slot: s,
+                    value: jump_secret.get_untracked(),
+                });
+            }
+        }
         let id = c.id.clone();
         leptos::task::spawn_local(async move {
             match ipc::call::<_, ()>(
@@ -269,11 +483,27 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
                             on:input=move |ev| { let v = event_target_value(&ev); cfg.update(|c| c.user = (!v.is_empty()).then_some(v)); } />
                     </div>
                     <div class="field">
-                        <label for="cf-pw">"Password"</label>
-                        <input id="cf-pw" type="password" autocomplete="new-password"
-                            placeholder=if has_password { "Saved; leave empty to keep it" } else { "" }
-                            prop:value=move || password.get() on:input=move |ev| password.set(event_target_value(&ev)) />
+                        <label for="cf-auth">"Sign in with"</label>
+                        <select id="cf-auth" on:change=move |ev| {
+                            let v = event_target_value(&ev);
+                            cfg.update(|c| if let Some((_, a)) = auth_choices(c.engine).iter().find(|(l, _)| *l == v) {
+                                c.auth = a.clone();
+                            });
+                        }>
+                            {move || auth_choices(cfg.with(|c| c.engine)).iter().map(|(l, a)| {
+                                let a = a.clone();
+                                view! { <option selected=move || cfg.with(|c| c.auth == a)>{*l}</option> }
+                            }).collect_view()}
+                        </select>
                     </div>
+                    <Show when=move || cfg.with(|c| c.auth == AuthMethod::Password)>
+                        <div class="field">
+                            <label for="cf-pw">"Password"</label>
+                            <input id="cf-pw" type="password" autocomplete="new-password"
+                                placeholder=if has_password { "Saved; leave empty to keep it" } else { "" }
+                                prop:value=move || password.get() on:input=move |ev| password.set(event_target_value(&ev)) />
+                        </div>
+                    </Show>
                     <div class="field">
                         <label for="cf-name">"Name"</label>
                         <input id="cf-name" placeholder="Shown in the list" prop:value=move || cfg.with(|c| c.name.clone())
@@ -313,6 +543,56 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
                         <label><input type="checkbox" prop:checked=move || cfg.with(|c| c.tls.accept_invalid)
                             on:change=move |ev| cfg.update(|c| c.tls.accept_invalid = event_target_checked(&ev)) />" Accept invalid certificates"</label>
                     </div>
+                    <details class="more certs" open=certs_open>
+                        <summary>"Certificates"</summary>
+                        <div class="more-body">
+                        {file_field("cf-ca", "CA certificate", move || cfg.with(|c| c.tls.ca_file.clone()), move |p| cfg.update(|c| c.tls.ca_file = p))}
+                        {file_field("cf-cert", "Client certificate", move || cfg.with(|c| c.tls.client_cert.clone()), move |p| cfg.update(|c| c.tls.client_cert = p))}
+                        {file_field("cf-key", "Client key", move || cfg.with(|c| c.tls.client_key.clone()), move |p| cfg.update(|c| c.tls.client_key = p))}
+                        <Show when=move || cfg.with(|c| c.tls.client_key.is_some())>
+                            <div class="field">
+                                <label for="cf-key-pass">"Key passphrase"</label>
+                                <input id="cf-key-pass" type="password" autocomplete="new-password"
+                                    placeholder=if saved_key { "Saved; leave empty to keep it" } else { "Only if the key has one" }
+                                    prop:value=move || key_passphrase.get() on:input=move |ev| key_passphrase.set(event_target_value(&ev)) />
+                            </div>
+                        </Show>
+                        <div class="field">
+                            <label for="cf-server-name">"Server name"</label>
+                            <input id="cf-server-name" autocomplete="off" placeholder="Checked in the certificate instead of the host"
+                                prop:value=move || cfg.with(|c| c.tls.server_name.clone().unwrap_or_default())
+                                on:input=move |ev| { let v = event_target_value(&ev); cfg.update(|c| c.tls.server_name = (!v.trim().is_empty()).then(|| v.trim().to_owned())); } />
+                        </div>
+                        </div>
+                    </details>
+                    <details class="more ssh" open=ssh_open>
+                        <summary>"SSH tunnel"</summary>
+                        <div class="more-body">
+                        <div class="field">
+                            <span></span>
+                            <label><input type="checkbox" id="cf-ssh-on" prop:checked=move || cfg.with(|c| c.ssh.is_some())
+                                on:change=move |ev| {
+                                    let on = event_target_checked(&ev);
+                                    cfg.update(|c| c.ssh = on.then(|| SshConfig { target: new_hop(), jump: None }));
+                                } />" Connect through an SSH tunnel"</label>
+                        </div>
+                        <Show when=move || cfg.with(|c| c.ssh.is_some())>
+                            {hop_fields(cfg, Hop::Target, ssh_secret, saved_ssh)}
+                            <div class="field">
+                                <span></span>
+                                <label><input type="checkbox" id="cf-jump-on" prop:checked=move || cfg.with(|c| c.ssh.as_ref().is_some_and(|s| s.jump.is_some()))
+                                    on:change=move |ev| {
+                                        let on = event_target_checked(&ev);
+                                        cfg.update(|c| if let Some(s) = c.ssh.as_mut() { s.jump = on.then(new_hop); });
+                                    } />" Through a jump host first"</label>
+                            </div>
+                            <Show when=move || cfg.with(|c| c.ssh.as_ref().is_some_and(|s| s.jump.is_some()))>
+                                {hop_fields(cfg, Hop::Jump, jump_secret, saved_jump)}
+                            </Show>
+                            <p class="detail">"The host and port above are the database as the SSH host reaches it."</p>
+                        </Show>
+                        </div>
+                    </details>
                     <div class="field">
                         <span></span>
                         <label><input type="checkbox" prop:checked=move || cfg.with(|c| c.read_only)
@@ -331,9 +611,22 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
                         <div class="note">"Production connections open read-only. Writes need \"Unlock writes\", and destructive statements need the connection name typed."</div>
                     </Show>
                     {move || error.get().map(|e| view! { <div class="note danger" role="alert">{e}</div> })}
+                    <Show when=move || confirm_delete.get()>
+                        <div class="note danger" role="alert">{move || format!(
+                            "Delete \"{}\"? Its saved passwords, tabs and history go with it. This cannot be undone.",
+                            cfg.with(|c| c.name.clone())
+                        )}</div>
+                    </Show>
                 </div>
                 <footer>
-                    {existing.then(|| view! { <button type="button" class="btn danger" style:margin-inline-end="auto" on:click=delete>"Delete"</button> })}
+                    {existing.then(|| view! {
+                        <Show when=move || confirm_delete.get() fallback=move || view! {
+                            <button type="button" class="btn danger delete-connection" style:margin-inline-end="auto" on:click=move |_| confirm_delete.set(true)>"Delete"</button>
+                        }>
+                            <button type="button" class="btn" on:click=move |_| confirm_delete.set(false)>"Keep it"</button>
+                            <button type="button" class="btn danger confirm-delete" style:margin-inline-end="auto" on:click=delete>"Delete connection"</button>
+                        </Show>
+                    })}
                     <button type="button" class="btn" on:click=move |_| close()>"Cancel"</button>
                     <button type="button" class="btn" on:click=move |_| save(false)>"Save"</button>
                     <button type="submit" class="btn primary">"Save and connect"</button>
