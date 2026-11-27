@@ -7,6 +7,7 @@ mod app;
 mod dialogs;
 mod editor;
 mod grid;
+mod history;
 mod home;
 mod ipc;
 mod sidebar;

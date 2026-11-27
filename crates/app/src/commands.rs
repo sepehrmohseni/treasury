@@ -11,11 +11,11 @@ use treasury_core::format::{FormatOptions, display};
 use treasury_core::schema::{ChildPage, ChildQuery, ObjectDetails, ObjectPath};
 use treasury_core::{Error, Result};
 use treasury_ipc::{
-    AppFacts, ConnectionView, EditInfo, ExportFormat, ExportView, ImportItem, ImportPreview,
-    LiveView, NAME_LIMIT, Prepared, RowEdits, SavedQueryView, SecretInput, TabView, UpdateView,
-    WindowView, folder_path,
+    AppFacts, ConnectionView, EditInfo, ExportFormat, ExportView, HistoryView, ImportItem,
+    ImportPreview, LiveView, NAME_LIMIT, Prepared, RowEdits, RunOutcome, SavedQueryView,
+    SecretInput, TabView, UpdateView, WindowView, folder_path,
 };
-use treasury_store::{HistoryEntry, SavedQuery, TabState};
+use treasury_store::{RunStatus, SavedQuery, TabState};
 
 #[tauri::command]
 pub fn app_facts(state: State<'_, AppState>) -> AppFacts {
@@ -391,18 +391,41 @@ pub fn set_setting(
         .map_err(|e| Error::internal(e.to_string()))
 }
 
+/// The latest 200 statements run on connection `id`, newest first, or those matching `search`
+/// (every word, the last one as a prefix).
 #[tauri::command]
 pub fn history(
     state: State<'_, AppState>,
-    id: Option<ConnectionId>,
+    id: ConnectionId,
     search: Option<String>,
-) -> Result<Vec<HistoryEntry>> {
+) -> Result<Vec<HistoryView>> {
     let store = state.runtime.store();
-    match search.filter(|s| !s.trim().is_empty()) {
-        Some(q) => store.search_history(id.as_ref(), &q, 200),
-        None => store.history(id.as_ref(), None, 200),
-    }
-    .map_err(|e| Error::internal(e.to_string()))
+    let entries = match search.filter(|s| !s.trim().is_empty()) {
+        Some(q) => store.search_history(Some(&id), &q, 200)?,
+        None => store.history(Some(&id), None, 200)?,
+    };
+    Ok(entries
+        .into_iter()
+        .map(|e| HistoryView {
+            id: e.id,
+            text: e.text,
+            executed_at: e.executed_at,
+            duration_ms: e.duration_ms,
+            rows: e.rows,
+            outcome: match e.status {
+                RunStatus::Ok => RunOutcome::Ok,
+                RunStatus::Failed => RunOutcome::Failed,
+                RunStatus::Cancelled => RunOutcome::Cancelled,
+                RunStatus::Unfinished => RunOutcome::Unfinished,
+            },
+        })
+        .collect())
+}
+
+/// Deletes the history of connection `id` and returns how many statements it held.
+#[tauri::command]
+pub fn purge_history(state: State<'_, AppState>, id: ConnectionId) -> Result<u64> {
+    Ok(state.runtime.store().purge_history(Some(&id))?)
 }
 
 /// The most text a tab or saved query keeps: far more than any script typed or pasted, and a

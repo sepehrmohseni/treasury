@@ -101,9 +101,15 @@ pub fn Sidebar() -> impl IntoView {
                 <button role="tab" class="view-queries" class:on=move || state.side_view.get() == SideView::Queries
                     aria-selected=move || (state.side_view.get() == SideView::Queries).to_string()
                     on:click=move |_| state.side_view.set(SideView::Queries)>"Queries"</button>
+                <button role="tab" class="view-history" class:on=move || state.side_view.get() == SideView::History
+                    aria-selected=move || (state.side_view.get() == SideView::History).to_string()
+                    on:click=move |_| state.side_view.set(SideView::History)>"History"</button>
             </div>
             <Show when=move || state.side_view.get() == SideView::Queries>
                 <SavedQueries />
+            </Show>
+            <Show when=move || state.side_view.get() == SideView::History>
+                <crate::history::HistoryPanel />
             </Show>
             <div class="list" hidden=move || state.side_view.get() != SideView::Connections>
                 <div class="side-section">"Connections"</div>

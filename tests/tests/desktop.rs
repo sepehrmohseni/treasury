@@ -2,7 +2,7 @@
 //! the way a person would, against PostgreSQL in a container: add a connection from a connection
 //! string, run statements, read the grid, edit rows in place after reading the statements the
 //! edits become, confirm a DELETE after seeing its row count, work in several tabs and save one
-//! as a query, and find the tabs again after a restart.
+//! as a query, search the history, and find the tabs and the history again after a restart.
 //!
 //! It runs through `cargo xtask ci desktop`, which builds the app, starts a display when there is
 //! none and sets `TREASURY_APP` to the binary.
@@ -235,6 +235,21 @@ mod desktop {
         s.click_css(".dialog footer .btn:first-child");
         assert!(s.find(".dialog").is_none());
         assert_eq!(tab_count(&s), 4);
+
+        // History: what ran on this connection, searchable; an entry opens in a new tab, since
+        // the one shown holds text.
+        s.click_css(".side-views .view-history");
+        s.wait_text(".list.history", "SELECT 'second tab' AS note", 10);
+        s.keys(&s.wait("#history-search", 10), "insert");
+        s.wait_script(
+            "const e = [...document.querySelectorAll('.list.history .entry-text')]; \
+             return e.length === 1 && e[0].innerText.startsWith('INSERT INTO smoke')",
+            10,
+        );
+        shot("11-history");
+        s.click_css(".list.history .entry");
+        s.wait_text(".tab-strip .etab.on", "Query 3", 10);
+        s.wait_text(".editor pre", "INSERT INTO smoke", 10);
         s.click_css(".side-views .view-connections");
 
         // A production connection opens read-only, refuses writes until they are unlocked, and
@@ -258,10 +273,10 @@ mod desktop {
         s.click_css(".dialog button[type=submit]");
         s.wait_text(".toolbar .title", "smoke-prod", 30);
         s.wait(".toolbar .badge.ro", 30);
-        shot("11-production");
+        shot("12-production");
         run(&s, "DELETE FROM smoke");
         s.wait_text(".dialog", "Unlock writes to run it", 30);
-        shot("12-refused");
+        shot("13-refused");
         s.click_css(".dialog .btn.primary");
         s.wait_text(".statusbar", "Writes unlocked for 15 minutes", 30);
         run(&s, "DELETE FROM smoke");
@@ -272,9 +287,15 @@ mod desktop {
             "return document.querySelector('.dialog .btn.primary').disabled === false",
             10,
         );
-        shot("13-type-the-name");
+        shot("14-type-the-name");
         s.click_css(".dialog .btn.primary");
         s.wait_text(&shown(".grid .message"), "1 row changed", 30);
+
+        // Production connections keep no history unless their settings say so.
+        s.click_css(".side-views .view-history");
+        let history = s.wait_text(".list.history", "keeps no history", 10);
+        assert!(history.contains("No statements have run"), "{history}");
+        s.click_css(".side-views .view-connections");
 
         // Tips can be put away; Settings switches the theme and brings the walkthrough back.
         s.click_css(".hint .no-tips");
@@ -298,10 +319,10 @@ mod desktop {
             10,
         );
         s.wait_text(&shown(".result-tabs"), "1 row changed", 10);
-        shot("14-dark");
+        shot("15-dark");
         s.click_css(".brand .settings");
         s.wait("#st-theme", 10);
-        shot("15-settings");
+        shot("16-settings");
         s.click_css(".dialog .walkthrough");
         s.wait_text(".tour", "Your first five minutes", 10);
 
@@ -318,13 +339,22 @@ mod desktop {
         s.click(&s.wait_item(".list > .item", "smoke", 30));
         s.wait_text(".statusbar", "PostgreSQL", 60);
         let strip = s.wait_text(".tab-strip", "Second tab", 30);
-        for title in ["Query 1", "smoke", "Query 2"] {
+        for title in ["Query 1", "smoke", "Query 2", "Query 3"] {
             assert!(strip.contains(title), "{strip}");
         }
         s.click(&s.wait_item(".tab-strip .etab-title", "Query 2", 10));
         s.wait_text(".editor pre", "SELECT 'draft'", 10);
         run(&s, "SELECT count(*) AS n FROM smoke");
         s.wait_text(&shown(".result-foot"), "1 row", 30);
+
+        // The history kept from before the restart, and clearing it.
+        s.click_css(".side-views .view-history");
+        s.wait_text(".list.history", "SELECT 'second tab' AS note", 10);
+        s.click_css(".list.history .clear-history");
+        s.wait_text(".dialog", "cannot be undone", 10);
+        s.click_css(".dialog .btn.danger");
+        s.wait_text(".statusbar", "Cleared the history of \"smoke\"", 10);
+        s.wait_text(".list.history", "No statements have run", 10);
         drop(s);
         drop(driver);
     }

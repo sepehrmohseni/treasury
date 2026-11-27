@@ -42,6 +42,7 @@ pub fn Dialogs() -> impl IntoView {
             view! { <SaveQueryDialog tab=tab query=query /> }.into_any()
         }
         Dialog::DeleteQuery(q) => view! { <DeleteQueryDialog query=q /> }.into_any(),
+        Dialog::ClearHistory(id) => view! { <ClearHistoryDialog connection=id /> }.into_any(),
         Dialog::CloseTab {
             tab,
             unsaved_text,
@@ -312,6 +313,12 @@ fn ConnectionForm(initial: ConnectionConfig) -> impl IntoView {
                         <span></span>
                         <label><input type="checkbox" prop:checked=move || cfg.with(|c| c.read_only)
                             on:change=move |ev| cfg.update(|c| c.read_only = event_target_checked(&ev)) />" Open read-only"</label>
+                    </div>
+                    <div class="field">
+                        <span></span>
+                        // Until it is changed, production connections keep none and others do.
+                        <label><input type="checkbox" id="cf-history" prop:checked=move || cfg.with(|c| c.records_history())
+                            on:change=move |ev| cfg.update(|c| c.history = Some(event_target_checked(&ev))) />" Keep a history of statements run"</label>
                     </div>
                     <Show when=move || cfg.with(|c| c.tls.accept_invalid)>
                         <div class="note warn">"Certificates will not be checked, so anyone between you and the server could read and change the traffic."</div>
@@ -672,6 +679,53 @@ fn DeleteQueryDialog(query: SavedQueryView) -> impl IntoView {
                 <footer>
                     <button class="btn" on:click=move |_| close()>"Cancel"</button>
                     <button class="btn danger" on:click=delete>"Delete saved query"</button>
+                </footer>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn ClearHistoryDialog(connection: treasury_core::config::ConnectionId) -> impl IntoView {
+    let state = ui();
+    let name = state
+        .connections
+        .with_untracked(|l| {
+            l.iter()
+                .find(|c| c.config.id == connection)
+                .map(|c| c.config.name.clone())
+        })
+        .unwrap_or_default();
+    let label = name.clone();
+    let clear = move |_| {
+        let (id, name) = (connection.clone(), name.clone());
+        leptos::task::spawn_local(async move {
+            match ipc::call::<_, u64>("purge_history", &serde_json::json!({ "id": id })).await {
+                Ok(n) => {
+                    state.notice.set(Some(match n {
+                        1 => format!("Cleared the history of \"{name}\": 1 statement."),
+                        n => format!(
+                            "Cleared the history of \"{name}\": {} statements.",
+                            crate::grid::thousands(n)
+                        ),
+                    }));
+                    state.history_changed();
+                }
+                Err(e) => state.notice.set(Some(e.to_string())),
+            }
+            close();
+        });
+    };
+    view! {
+        <div class="backdrop">
+            <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="ch-title">
+                <header id="ch-title">"Clear history"</header>
+                <div class="body">
+                    <p>{format!("Remove every statement recorded for \"{label}\"? This cannot be undone.")}</p>
+                </div>
+                <footer>
+                    <button class="btn" on:click=move |_| close()>"Cancel"</button>
+                    <button class="btn danger" on:click=clear>"Clear history"</button>
                 </footer>
             </div>
         </div>

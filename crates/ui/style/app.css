@@ -68,6 +68,17 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .side-section.folder { text-transform: none; letter-spacing: 0; font: 500 11.5px/1.4 var(--ui); padding-top: 10px; }
 /* Folders are sorted after the queries without one, so every query after a heading is in it. */
 .list.queries .folder ~ .item { padding-inline-start: 24px; }
+/* History: a search box, entries of two lines, and a footer to clear it. */
+.list.history { display: flex; flex-direction: column; }
+.history-search { padding: 8px 12px; position: sticky; top: 0; background: var(--sheet); border-bottom: 1px solid var(--rule); }
+.history-search input { width: 100%; height: 26px; padding: 0 8px; border: 1px solid var(--rule-strong); border-radius: 4px; background-color: var(--paper); }
+.entry { display: grid; gap: 1px; width: 100%; padding: 5px 12px; border: 0; border-bottom: 1px solid var(--rule); background: none; text-align: start; cursor: default; }
+.entry:hover { background: var(--raised); }
+.entry-text { font: 12px/18px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.entry-meta { font-size: 11px; color: var(--faint); }
+.entry-meta.failed { color: var(--red); }
+.history-foot { margin-top: auto; padding: 8px 12px; }
+.list .empty.error { color: var(--red); }
 .list .empty { margin: 0; padding: 12px; color: var(--muted); font-size: 12.5px; }
 .dialog footer .delete-query { margin-inline-end: auto; }
 .side-section { padding: 8px 12px 4px; font: 500 10.5px/1.4 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }

@@ -243,6 +243,37 @@ pub struct SavedQueryView {
     pub connection: Option<ConnectionId>,
 }
 
+/// How a statement in the history ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunOutcome {
+    /// It finished.
+    Ok,
+    /// It failed with an error.
+    Failed,
+    /// It was cancelled.
+    Cancelled,
+    /// It had not ended when the entry was read: still running, or Treasury quit first.
+    Unfinished,
+}
+
+/// A statement in the history.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryView {
+    /// Identifier.
+    pub id: i64,
+    /// The statement as it ran.
+    pub text: String,
+    /// When it started, Unix milliseconds.
+    pub executed_at: i64,
+    /// How long it ran.
+    pub duration_ms: i64,
+    /// Rows returned or changed, when known.
+    pub rows: Option<i64>,
+    /// How it ended.
+    pub outcome: RunOutcome,
+}
+
 /// The longest name or folder a saved query may have, in characters.
 pub const NAME_LIMIT: usize = 200;
 

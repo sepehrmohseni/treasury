@@ -364,12 +364,7 @@ pub fn open_saved(q: SavedQueryView) {
 /// name.
 pub fn save_current() {
     let state = ui();
-    let Some(id) = state.current_tab.with_untracked(|m| {
-        state
-            .active
-            .get_untracked()
-            .and_then(|c| m.get(&c).cloned())
-    }) else {
+    let Some(id) = state.current_untracked() else {
         return;
     };
     let query = tab(&id).and_then(|t| t.saved_query).and_then(|q| {
@@ -458,4 +453,37 @@ pub fn unlink(id: &str) {
         keep(&tab);
     }
     state.reload_queries();
+}
+
+/// Puts `text` in the shown tab when that one is empty, and in a new tab otherwise, so no text is
+/// ever replaced.
+pub fn open_text(text: String) {
+    let state = ui();
+    let Some(connection) = state.active.get_untracked() else {
+        return;
+    };
+    match state
+        .current_untracked()
+        .filter(|id| text_of(id).trim().is_empty())
+    {
+        Some(id) => {
+            set_text(&id, text);
+            ui().cursors.update(|m| {
+                m.insert(id.clone(), 0);
+            });
+            show(id);
+        }
+        None => {
+            let title = state.tabs.with_untracked(|t| {
+                new_tab_title(
+                    t.iter()
+                        .filter(|t| t.connection == connection)
+                        .map(|t| t.title.as_str()),
+                )
+            });
+            leptos::task::spawn_local(async move {
+                open(connection, title, text, None).await;
+            });
+        }
+    }
 }

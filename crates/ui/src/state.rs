@@ -45,6 +45,8 @@ pub enum Dialog {
     },
     /// Deleting a saved query.
     DeleteQuery(SavedQueryView),
+    /// Deleting the history of a connection.
+    ClearHistory(ConnectionId),
     /// Closing a tab that holds work not saved anywhere else.
     CloseTab {
         tab: String,
@@ -92,6 +94,7 @@ impl Output {
 pub enum SideView {
     Connections,
     Queries,
+    History,
 }
 
 /// Everything the components share.
@@ -124,6 +127,8 @@ pub struct Ui {
     /// The text of each saved query open in a tab, as last saved, to tell a changed tab.
     pub saved_text: RwSignal<HashMap<String, String>>,
     pub side_view: RwSignal<SideView>,
+    /// Changes whenever the history may have gained or lost entries.
+    pub history_rev: RwSignal<u64>,
     /// Asks the workspace to run a statement the confirm dialog approved.
     pub approved: RwSignal<Option<Approved>>,
     /// The result whose edits the review dialog just saved, so it reads its rows again.
@@ -166,6 +171,7 @@ impl Ui {
             queries: RwSignal::new(Vec::new()),
             saved_text: RwSignal::new(HashMap::new()),
             side_view: RwSignal::new(SideView::Connections),
+            history_rev: RwSignal::new(0),
             approved: RwSignal::new(None),
             saved: RwSignal::new(None),
             update: RwSignal::new(None),
@@ -187,6 +193,17 @@ impl Ui {
     pub fn current(&self) -> Option<String> {
         let id = self.active.get()?;
         self.current_tab.with(|m| m.get(&id).cloned())
+    }
+
+    /// [`Ui::current`], without subscribing to changes.
+    pub fn current_untracked(&self) -> Option<String> {
+        let id = self.active.get_untracked()?;
+        self.current_tab.with_untracked(|m| m.get(&id).cloned())
+    }
+
+    /// Says that the history may have changed, so the history list reads it again.
+    pub fn history_changed(&self) {
+        self.history_rev.update(|n| *n += 1);
     }
 
     /// Reloads the saved query list from the app.

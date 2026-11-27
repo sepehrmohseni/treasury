@@ -114,7 +114,13 @@ pub fn Results(
                 ipc::call::<_, ExecutionStatus>("status", &serde_json::json!({ "result": rid }))
                     .await
             {
+                // A statement that has just finished is in the history now.
+                let was = status.with_untracked(|old| old.as_ref().is_some_and(|o| o.finished));
+                let finished = s.finished;
                 status.set(Some(s));
+                if finished && !was {
+                    state.history_changed();
+                }
             }
         });
     };

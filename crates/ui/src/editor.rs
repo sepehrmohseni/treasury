@@ -29,6 +29,7 @@ const HINTS: &[&str] = &[
     "Double-click a table in the list on the left to see its rows.",
     "Every tab keeps its text as you type, so it is still there after a restart.",
     "Ctrl+S saves the tab as a query; saved queries are under Queries on the left.",
+    "History on the left lists what ran on this connection; search it, or click one to open it.",
 ];
 
 pub fn dialect_of(engine: Engine) -> Option<SqlDialect> {
@@ -195,6 +196,8 @@ async fn run(
     };
     if let Some(old) = out.result.get_untracked() {
         let _ = ipc::call::<_, ()>("close_result", &serde_json::json!({ "result": old })).await;
+        // A result still being read is recorded in the history when it closes.
+        state.history_changed();
     }
     match ipc::call::<_, u64>(
         "run",
