@@ -86,13 +86,60 @@ fn history_text_is_sealed_at_rest() {
         s.saved_query_text("q1").unwrap().as_deref(),
         Some("select needle_in_saved")
     );
-    // A different key cannot read it.
+    // A different key cannot read it: the lists leave such rows out, and opening one says why.
     drop(s);
     let other = Store::open(&path, Sealer::new(random_key().unwrap())).unwrap();
+    assert!(other.history(None, None, 10).unwrap().is_empty());
     assert!(matches!(
-        other.history(None, None, 10),
+        other.saved_query_text("q1"),
         Err(StoreError::Sealed)
     ));
+}
+
+#[test]
+fn rows_sealed_under_another_key_are_left_out_of_lists() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("treasury.db");
+    let c = conn("a");
+    let tab = |id: &str, position: i64| TabState {
+        id: id.into(),
+        position,
+        connection: Some(c.id.clone()),
+        title: id.into(),
+        text: format!("select '{id}'"),
+        cursor: 0,
+        saved_query: None,
+    };
+    // A session whose key was lost (no keychain), then one with a new key.
+    let old_key = random_key().unwrap();
+    {
+        let s = Store::open(&path, Sealer::new(old_key.clone())).unwrap();
+        s.add_history(&entry(&c.id, "select old_session", 1))
+            .unwrap();
+        s.save_tab(&tab("old", 0)).unwrap();
+    }
+    let s = Store::open(&path, Sealer::new(random_key().unwrap())).unwrap();
+    s.add_history(&entry(&c.id, "select new_session", 2))
+        .unwrap();
+    s.save_tab(&tab("new", 1)).unwrap();
+    let texts = |h: Vec<HistoryEntry>| h.into_iter().map(|e| e.text).collect::<Vec<_>>();
+    assert_eq!(
+        texts(s.history(None, None, 10).unwrap()),
+        ["select new_session"]
+    );
+    assert_eq!(
+        texts(s.search_history(Some(&c.id), "select", 10).unwrap()),
+        ["select new_session"]
+    );
+    assert_eq!(s.tabs().unwrap(), vec![tab("new", 1)]);
+    // The rows are still there: with the old key back, they open again.
+    drop(s);
+    let s = Store::open(&path, Sealer::new(old_key)).unwrap();
+    assert_eq!(
+        texts(s.history(None, None, 10).unwrap()),
+        ["select old_session"]
+    );
+    assert_eq!(s.tabs().unwrap(), vec![tab("old", 0)]);
 }
 
 #[cfg(unix)]

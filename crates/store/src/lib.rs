@@ -31,8 +31,9 @@ pub enum StoreError {
     Decode(&'static str),
     /// Sealed text could not be opened: the field key changed or the data was altered.
     #[error(
-        "Stored query text could not be decrypted. The key in the system keychain may have been \
-         removed; purging history removes the unreadable entries."
+        "This query text was saved with a key this session does not have, so it cannot be read. \
+         That happens when the key was removed from the system keychain, or when an earlier \
+         session had no keychain to keep it in."
     )]
     Sealed,
     /// The file could not be created with private permissions.
@@ -410,10 +411,14 @@ impl Store {
         let mut out = Vec::new();
         for row in rows {
             let (id, c, blob, at, dur, n, status) = row?;
+            // Rows sealed under another key (see `readable`) are left out, not an error.
+            let Some(text) = readable(self.open_text(HISTORY_CTX, &blob))? else {
+                continue;
+            };
             out.push(HistoryEntry {
                 id,
                 connection: ConnectionId(c),
-                text: self.open_text(HISTORY_CTX, &blob)?,
+                text,
                 executed_at: at,
                 duration_ms: dur,
                 rows: n,
@@ -476,10 +481,13 @@ impl Store {
         let Some((c, blob, at, dur, n, status)) = row else {
             return Ok(None);
         };
+        let Some(text) = readable(self.open_text(HISTORY_CTX, &blob))? else {
+            return Ok(None);
+        };
         Ok(Some(HistoryEntry {
             id,
             connection: ConnectionId(c),
-            text: self.open_text(HISTORY_CTX, &blob)?,
+            text,
             executed_at: at,
             duration_ms: dur,
             rows: n,
@@ -592,12 +600,14 @@ impl Store {
             })?;
             mapped.collect::<std::result::Result<_, _>>()?
         };
-        rows.into_iter()
-            .map(|(mut tab, blob)| {
-                tab.text = self.open_text(TAB_CTX, &blob)?;
-                Ok(tab)
-            })
-            .collect()
+        let mut out = Vec::with_capacity(rows.len());
+        for (mut tab, blob) in rows {
+            if let Some(text) = readable(self.open_text(TAB_CTX, &blob))? {
+                tab.text = text;
+                out.push(tab);
+            }
+        }
+        Ok(out)
     }
 
     /// Saves one tab. Called on every pause in typing, so the text survives a crash.
@@ -676,6 +686,19 @@ impl Store {
                 .map_err(|_| StoreError::Decode("snapshot"))
         })
         .transpose()
+    }
+}
+
+/// Text sealed under another field key is `None`. That happens when the key in the keychain was
+/// removed, and in every session without a keychain, whose key lives only in memory: what an
+/// earlier session sealed cannot be opened again. Lists leave such rows out rather than fail as a
+/// whole; the rows stay until history is purged or the tab is closed, so they open again if the
+/// original key comes back.
+fn readable(opened: Result<String>) -> Result<Option<String>> {
+    match opened {
+        Ok(text) => Ok(Some(text)),
+        Err(StoreError::Sealed) => Ok(None),
+        Err(e) => Err(e),
     }
 }
 
