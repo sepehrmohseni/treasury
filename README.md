@@ -5,8 +5,10 @@ MongoDB, with a desktop app and a command line tool. It reads each statement bef
 does: it knows which ones write, shows how many rows an UPDATE or DELETE would change, and keeps
 production connections read-only until you unlock them.
 
-It has no account, no paid tier and no telemetry. It is in early development and has no release
-yet. What comes after the first release is in the [roadmap](docs/roadmap.md).
+It has no account, no paid tier and no telemetry. Downloads for Linux, macOS and Windows are on
+the [project page](https://sepehrmohseni.github.io/treasury/) and with each
+[release](https://github.com/sepehrmohseni/treasury/releases). What comes next is in the
+[roadmap](docs/roadmap.md).
 
 ## Desktop app
 
