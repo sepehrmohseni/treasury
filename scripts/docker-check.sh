@@ -23,6 +23,7 @@
 #   TREASURY_CI_GPU=off     do not pass /dev/dri in (the desktop smoke test renders in software)
 #   TREASURY_CI_RUST_IMAGE  build the image from another Rust release, e.g. rust:1.101.0-trixie
 #   TREASURY_CI_TARGET_GB   start the build cache afresh once it grows past this (default 30)
+#   TREASURY_SCREENSHOTS    a directory for the desktop test to save screenshots of each screen in
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -123,9 +124,17 @@ if [ "${1:-}" = bundle ]; then
     "$image" bundle
 fi
 
+# The desktop test saves a screenshot of each screen it reaches into this directory.
+shots=()
+if [ -n "${TREASURY_SCREENSHOTS:-}" ]; then
+  mkdir -p "$TREASURY_SCREENSHOTS"
+  shots=(--volume "$(cd "$TREASURY_SCREENSHOTS" && pwd):/screenshots:z"
+    --env TREASURY_SCREENSHOTS=/screenshots)
+fi
+
 # Running as your own user id keeps the read-only checkout readable even with a private umask.
 # The ",z" label lets SELinux hosts (Fedora, RHEL) share the mount; elsewhere it is ignored.
 exec docker run "${common[@]}" ${tty[@]+"${tty[@]}"} ${gpu[@]+"${gpu[@]}"} \
-  ${dockersock[@]+"${dockersock[@]}"} \
+  ${dockersock[@]+"${dockersock[@]}"} ${shots[@]+"${shots[@]}"} \
   --volume "$root:/src:ro,z" \
   "$image" "$@"
