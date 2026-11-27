@@ -261,6 +261,42 @@ mod desktop {
             serde_json::json!(true)
         );
         s.wait_text(".editor pre", "INSERT INTO smoke VALUES (1, 'one')", 10);
+
+        // Run all: every statement in turn, each with its own result.
+        let editor = s.wait(".editor textarea", 10);
+        s.clear(&editor);
+        s.keys(
+            &editor,
+            "CREATE TABLE script_t (n int);\nINSERT INTO script_t VALUES (1), (2);\n\
+             SELECT n FROM script_t ORDER BY n",
+        );
+        s.click_css(".toolbar .run-all");
+        s.wait_text(".statusbar", "Ran all 3 statements.", 30);
+        let tabs = s.wait_text(&shown(".result-tabs"), "3 · Result", 30);
+        assert!(
+            tabs.contains("1 · Done") && tabs.contains("2 · 2 rows changed"),
+            "{tabs}"
+        );
+        assert_eq!(s.text(&s.wait(&cell(2, 1), 10)), "2");
+        shot("12-run-all");
+        s.click(&s.wait_item(&shown(".result-tabs button"), "2 · 2 rows", 10));
+        s.wait_text(&shown(".grid .message"), "2 rows changed", 10);
+
+        // A script stops at the first statement that fails.
+        s.clear(&editor);
+        s.keys(
+            &editor,
+            "SELECT 1 AS one; SELECT * FROM no_such_table; SELECT 3 AS three",
+        );
+        s.click_css(".toolbar .run-all");
+        let bar = s.wait_text(
+            ".statusbar",
+            "Statement 2 of 3 failed, so the ones after it did not run",
+            30,
+        );
+        assert!(bar.contains("no_such_table"), "{bar}");
+        let tabs = s.text(&s.wait(&shown(".result-tabs"), 10));
+        assert!(!tabs.contains("3") && !tabs.contains("2 ·"), "{tabs}");
         s.click_css(".side-views .view-connections");
 
         // A production connection opens read-only, refuses writes until they are unlocked, and
@@ -284,10 +320,10 @@ mod desktop {
         s.click_css(".dialog button[type=submit]");
         s.wait_text(".toolbar .title", "smoke-prod", 30);
         s.wait(".toolbar .badge.ro", 30);
-        shot("12-production");
+        shot("13-production");
         run(&s, "DELETE FROM smoke");
         s.wait_text(".dialog", "Unlock writes to run it", 30);
-        shot("13-refused");
+        shot("14-refused");
         s.click_css(".dialog .btn.primary");
         s.wait_text(".statusbar", "Writes unlocked for 15 minutes", 30);
         run(&s, "DELETE FROM smoke");
@@ -298,7 +334,7 @@ mod desktop {
             "return document.querySelector('.dialog .btn.primary').disabled === false",
             10,
         );
-        shot("14-type-the-name");
+        shot("15-type-the-name");
         s.click_css(".dialog .btn.primary");
         s.wait_text(&shown(".grid .message"), "1 row changed", 30);
 
@@ -330,10 +366,10 @@ mod desktop {
             10,
         );
         s.wait_text(&shown(".result-tabs"), "1 row changed", 10);
-        shot("15-dark");
+        shot("16-dark");
         s.click_css(".brand .settings");
         s.wait("#st-theme", 10);
-        shot("16-settings");
+        shot("17-settings");
         s.click_css(".dialog .walkthrough");
         s.wait_text(".tour", "Your first five minutes", 10);
 

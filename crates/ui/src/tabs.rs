@@ -299,11 +299,14 @@ pub fn close(id: String) {
         .or_else(|| at.checked_sub(1).and_then(|i| siblings.get(i)))
         .cloned();
     state.tabs.update(|all| all.retain(|x| x.id != id));
-    if let Some(out) = state.outputs.try_update(|m| m.remove(&id)).flatten()
-        && let Some(rid) = out.result.get_untracked()
-    {
+    crate::editor::stop_script(&id);
+    if let Some(out) = state.outputs.try_update(|m| m.remove(&id)).flatten() {
+        let results = out.results.get_untracked();
         leptos::task::spawn_local(async move {
-            let _ = ipc::call::<_, ()>("close_result", &serde_json::json!({ "result": rid })).await;
+            for rid in results {
+                let _ =
+                    ipc::call::<_, ()>("close_result", &serde_json::json!({ "result": rid })).await;
+            }
         });
     }
     state.tab_text.update(|m| {

@@ -23,7 +23,8 @@ fn close() {
 #[component]
 pub fn Dialogs() -> impl IntoView {
     let state = ui();
-    move || match state.dialog.get() {
+    move || {
+        match state.dialog.get() {
         Dialog::None => ().into_any(),
         Dialog::Connection(c) => view! { <ConnectionForm initial=*c /> }.into_any(),
         Dialog::Import { path, preview } => {
@@ -34,8 +35,9 @@ pub fn Dialogs() -> impl IntoView {
             connection,
             statement,
             prepared,
+            step,
         } => view! {
-            <ConfirmDialog tab=tab connection=connection statement=statement prepared=prepared />
+            <ConfirmDialog tab=tab connection=connection statement=statement prepared=prepared step=step />
         }
         .into_any(),
         Dialog::SaveQuery { tab, query } => {
@@ -87,6 +89,7 @@ pub fn Dialogs() -> impl IntoView {
                 </div>
             }.into_any()
         }
+    }
     }
 }
 
@@ -419,6 +422,7 @@ fn ConfirmDialog(
     connection: treasury_core::config::ConnectionId,
     statement: String,
     prepared: Prepared,
+    step: Option<(usize, usize)>,
 ) -> impl IntoView {
     let state = ui();
     let typed = RwSignal::new(String::new());
@@ -437,6 +441,12 @@ fn ConfirmDialog(
     let ready = move || !needs_name || typed.get().trim() == expected.trim();
     let token = prepared.token;
     let (conn_run, stmt_run) = (connection.clone(), statement.clone());
+    // Anything but running the statement stops a script it is part of.
+    let (stop_tab, stop_unlock) = (tab.clone(), tab.clone());
+    let cancel = move |_| {
+        crate::editor::stop_script(&stop_tab);
+        close();
+    };
     let go = move |_| {
         state.approved.set(Some(Approved {
             tab: tab.clone(),
@@ -448,6 +458,7 @@ fn ConfirmDialog(
         close();
     };
     let unlock = move |_| {
+        crate::editor::stop_script(&stop_unlock);
         let id = connection.clone();
         leptos::task::spawn_local(async move {
             match ipc::call::<_, LiveView>("unlock_writes", &serde_json::json!({ "id": id })).await
@@ -470,6 +481,9 @@ fn ConfirmDialog(
             <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="gd-title">
                 <header id="gd-title">{if refused.is_some() { "This statement cannot run" } else { "Check before it runs" }}</header>
                 <div class="body">
+                    {step.map(|(n, total)| view! {
+                        <p class="detail">{format!("Statement {n} of {total}. Cancelling stops the ones after it.")}</p>
+                    })}
                     <code class="fingerprint">{prepared.summary.clone()}</code>
                     {refused.clone().map(|r| view! { <div class="note danger">{r}</div> })}
                     {prepared.count.map(|n| view! {
@@ -485,7 +499,7 @@ fn ConfirmDialog(
                     })}
                 </div>
                 <footer>
-                    <button class="btn" on:click=move |_| close()>"Cancel"</button>
+                    <button class="btn" on:click=cancel>"Cancel"</button>
                     {if refused.is_some() {
                         read_only_refusal.then(|| view! { <button class="btn primary" on:click=unlock>"Unlock writes for 15 minutes"</button> }).into_any()
                     } else {

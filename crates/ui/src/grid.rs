@@ -9,7 +9,7 @@
 //! statements they become.
 
 use crate::ipc;
-use crate::state::{Dialog, ui};
+use crate::state::{Dialog, Output, ui};
 use leptos::prelude::*;
 use std::collections::HashMap;
 use treasury_core::exec::ExecutionStatus;
@@ -73,18 +73,78 @@ fn focus_cell_editor() {
     });
 }
 
+/// What a result set without rows says: how many rows the statement changed.
+fn changed(affected: Option<u64>) -> String {
+    match affected {
+        Some(1) => "1 row changed".into(),
+        Some(n) => format!("{} rows changed", thousands(n)),
+        None => "Done".into(),
+    }
+}
+
+/// The result tabs: each set of each result, as `(result index, set index, label)`. With
+/// several results ("Run all"), each label starts with the statement's number, and a statement
+/// without sets yet still gets a tab saying how it stands.
+fn tabs_of(
+    results: &[u64],
+    statuses: &HashMap<u64, ExecutionStatus>,
+) -> Vec<(usize, usize, String)> {
+    let many = results.len() > 1;
+    let mut tabs = Vec::new();
+    for (ri, rid) in results.iter().enumerate() {
+        let status = statuses.get(rid);
+        let sets = status.map_or(&[][..], |s| s.sets.as_slice());
+        if sets.is_empty() && many {
+            let what = match status {
+                Some(s) if s.error.is_some() => "Failed",
+                Some(s) if s.finished => "Done",
+                _ => "Running…",
+            };
+            tabs.push((ri, 0, format!("{} · {what}", ri + 1)));
+        }
+        for (si, set) in sets.iter().enumerate() {
+            let label = match (set.columns.is_empty(), many, sets.len()) {
+                (true, _, _) => changed(set.affected),
+                (false, true, 1) => "Result".to_owned(),
+                (false, _, _) => format!("Result {}", si + 1),
+            };
+            tabs.push((
+                ri,
+                si,
+                if many {
+                    format!("{} · {label}", ri + 1)
+                } else {
+                    label
+                },
+            ));
+        }
+    }
+    tabs
+}
+
 #[component]
 pub fn Results(
-    result: RwSignal<Option<u64>>,
-    /// Set to how many grid edits are not saved yet.
-    pending: RwSignal<usize>,
-    /// Called after edits were saved, to read the rows again.
+    /// The tab's results and how they stand.
+    out: Output,
+    /// Called with a result whose edits were saved, to run its statement again.
     #[prop(into)]
-    on_saved: Callback<()>,
+    on_saved: Callback<u64>,
 ) -> impl IntoView {
     let state = ui();
-    let status = RwSignal::new(None::<ExecutionStatus>);
-    let set = RwSignal::new(0usize);
+    let results = out.results;
+    let statuses = out.statuses;
+    // The result shown, and which of its sets.
+    let pick = RwSignal::new((0usize, 0usize));
+    let result = Memo::new(move |_| {
+        let i = pick.get().0;
+        results.with(|r| r.get(i).copied())
+    });
+    let set = Memo::new(move |_| pick.get().1);
+    let status = Memo::new(move |_| {
+        result
+            .get()
+            .and_then(|r| statuses.with(|m| m.get(&r).cloned()))
+    });
     let blocks = RwSignal::new(HashMap::<u64, Vec<Vec<Cell>>>::new());
     let loading = RwSignal::new(Vec::<u64>::new());
     let scroll = RwSignal::new(0.0f64);
@@ -93,7 +153,7 @@ pub fn Results(
     // Editing.
     let info = RwSignal::new(None::<EditInfo>);
     let asked = RwSignal::new(None::<(u64, usize)>);
-    let unsaved = pending;
+    let unsaved = out.pending;
     let pending = RwSignal::new(RowEdits::default());
     Effect::new(move |_| unsaved.set(pending.with(change_count)));
     let selected = RwSignal::new(None::<(u64, usize)>);
@@ -115,9 +175,11 @@ pub fn Results(
                     .await
             {
                 // A statement that has just finished is in the history now.
-                let was = status.with_untracked(|old| old.as_ref().is_some_and(|o| o.finished));
+                let was = statuses.with_untracked(|m| m.get(&rid).is_some_and(|o| o.finished));
                 let finished = s.finished;
-                status.set(Some(s));
+                statuses.update(|m| {
+                    m.insert(rid, s);
+                });
                 if finished && !was {
                     state.history_changed();
                 }
@@ -150,13 +212,37 @@ pub fn Results(
         });
     };
 
-    // A new result starts from the top, with nothing pending.
+    // Which result to show when the list changes: the one a run produced, the latest
+    // statement of a script, or the statement run again after its rows were saved.
+    Effect::new(move |prev: Option<Vec<u64>>| {
+        let now = results.get();
+        statuses.update(|m| m.retain(|rid, _| now.contains(rid)));
+        for rid in &now {
+            if !statuses.with_untracked(|m| m.contains_key(rid)) {
+                refresh(*rid);
+            }
+        }
+        let shown = match &prev {
+            Some(p) if now.len() > p.len() => now.len() - 1,
+            Some(p) if now.len() == p.len() => now
+                .iter()
+                .zip(p)
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| pick.get_untracked().0),
+            _ => 0,
+        };
+        pick.set((shown.min(now.len().saturating_sub(1)), 0));
+        now
+    });
+
+    // Another result or set starts from the top, with nothing pending.
     Effect::new(move |_| {
-        let rid = result.get();
+        let (rid, _) = (result.get(), set.get());
         blocks.set(HashMap::new());
-        set.set(0);
         scroll.set(0.0);
-        status.set(None);
+        if let Some(el) = viewport.get_untracked() {
+            el.set_scroll_top(0);
+        }
         reset_edits();
         if let Some(rid) = rid {
             fetch(rid, 0);
@@ -211,11 +297,14 @@ pub fn Results(
 
     // The review dialog saved the edits: read the rows again.
     Effect::new(move |_| {
-        let saved = state.saved.get();
-        if saved.is_some() && saved == result.get_untracked() {
+        if let Some(rid) = state
+            .saved
+            .get()
+            .filter(|s| Some(*s) == result.get_untracked())
+        {
             state.saved.set(None);
             pending.set(RowEdits::default());
-            on_saved.run(());
+            on_saved.run(rid);
         }
     });
 
@@ -337,17 +426,14 @@ pub fn Results(
     view! {
         <section class="results" aria-label="Results">
             <div class="result-tabs" role="tablist">
-                {move || status.get().map(|st| st.sets.iter().enumerate().map(|(i, s)| {
-                    let label = if s.columns.is_empty() {
-                        match s.affected { Some(1) => "1 row changed".into(), Some(n) => format!("{} rows changed", thousands(n)), None => "Done".into() }
-                    } else {
-                        format!("Result {}", i + 1)
-                    };
-                    view! {
-                        <button role="tab" class:on=move || set.get() == i
-                            on:click=move |_| { set.set(i); blocks.set(HashMap::new()); reset_edits(); }>{label}</button>
-                    }
-                }).collect_view())}
+                {move || {
+                    let tabs = results.with(|r| statuses.with(|m| tabs_of(r, m)));
+                    tabs.into_iter().map(|(ri, si, label)| view! {
+                        <button role="tab" class:on=move || pick.get() == (ri, si)
+                            aria-selected=move || (pick.get() == (ri, si)).to_string()
+                            on:click=move |_| pick.set((ri, si))>{label}</button>
+                    }).collect_view()
+                }}
             </div>
             <div class="grid" node_ref=viewport on:scroll=on_scroll role="grid">
                 {move || {
@@ -508,6 +594,7 @@ pub fn Results(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use treasury_core::exec::SetStatus;
 
     fn cell(row: u64, column: usize, value: Option<&str>) -> CellEdit {
         CellEdit {
@@ -530,6 +617,60 @@ mod tests {
         assert_eq!(pending_value(&e, 1, 0), Some(None));
         assert_eq!(pending_value(&e, 2, 1), Some(Some("b".into())));
         assert_eq!(pending_value(&e, 0, 0), None);
+    }
+
+    fn status(sets: Vec<SetStatus>, finished: bool) -> ExecutionStatus {
+        ExecutionStatus {
+            id: 0,
+            sets,
+            notices: vec![],
+            dropped_notices: 0,
+            finished,
+            error: None,
+        }
+    }
+
+    fn set(columns: usize, affected: Option<u64>) -> SetStatus {
+        SetStatus {
+            columns: (0..columns)
+                .map(|i| {
+                    treasury_core::exec::Column::new(
+                        format!("c{i}"),
+                        "int",
+                        treasury_core::exec::ValueKind::Integer,
+                    )
+                })
+                .collect(),
+            rows: 0,
+            complete: true,
+            limited: false,
+            affected,
+            exported_rest: false,
+        }
+    }
+
+    #[test]
+    fn result_tabs_name_each_statement_of_a_script() {
+        let mut m = HashMap::new();
+        m.insert(1, status(vec![set(2, None), set(1, None)], true));
+        assert_eq!(
+            tabs_of(&[1], &m)
+                .into_iter()
+                .map(|t| t.2)
+                .collect::<Vec<_>>(),
+            ["Result 1", "Result 2"]
+        );
+        m.insert(2, status(vec![set(0, Some(3))], true));
+        m.insert(3, status(vec![set(2, None)], true));
+        m.insert(4, status(vec![], false));
+        assert_eq!(
+            tabs_of(&[2, 3, 4], &m),
+            [
+                (0, 0, "1 · 3 rows changed".to_owned()),
+                (1, 0, "2 · Result".to_owned()),
+                (2, 0, "3 · Running…".to_owned()),
+            ]
+        );
     }
 
     #[test]

@@ -12,6 +12,7 @@ use leptos::prelude::*;
 use treasury_core::analyze::Analyzer;
 use treasury_core::config::{ConnectionConfig, ConnectionId, Engine, Environment};
 use treasury_core::driver::SqlDialect;
+use treasury_core::exec::ExecutionStatus;
 use treasury_core::schema::{ObjectKind, ObjectNode};
 use treasury_ipc::{LiveView, Prepared};
 use treasury_sql::highlight::{SpanKind, highlight};
@@ -30,6 +31,7 @@ const HINTS: &[&str] = &[
     "Every tab keeps its text as you type, so it is still there after a restart.",
     "Ctrl+S saves the tab as a query; saved queries are under Queries on the left.",
     "History on the left lists what ran on this connection; search it, or click one to open it.",
+    "Shift+Ctrl+Enter runs every statement in the tab, one after another, each with its own result.",
 ];
 
 pub fn dialect_of(engine: Engine) -> Option<SqlDialect> {
@@ -87,6 +89,20 @@ pub fn browse_statement(config: &ConnectionConfig, node: &ObjectNode) -> Option<
         (_, Some(d)) => format!("SELECT * FROM {}", render::table(d, schema, name)),
         (_, None) => return None,
     })
+}
+
+/// Every statement of `text`, in order; a MongoDB command is one statement.
+pub fn statements_of(dialect: Option<SqlDialect>, text: &str) -> Vec<String> {
+    let Some(d) = dialect else {
+        return vec![text.trim().to_owned()];
+    };
+    SqlAnalyzer::new(d)
+        .classify(text)
+        .iter()
+        .filter_map(|s| text.get(s.range.clone()))
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 /// The statement to run: the selection, or the statement under the cursor.
@@ -148,9 +164,20 @@ fn highlighted(dialect: Option<SqlDialect>, text: &str) -> AnyView {
     parts.into_iter().collect_view().into_any()
 }
 
+/// Where a run's result goes among the tab's results.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    /// Instead of all of them: a statement run on its own.
+    Replace,
+    /// After them: the next statement of a script.
+    Append,
+    /// Instead of this one: its statement run again after its rows were saved.
+    Instead(u64),
+}
+
 /// Starts `statement` in tab `tab`: asks the guardrails first, then runs it or opens their
-/// dialog.
-pub fn start(tab: String, statement: String, limit: bool) {
+/// dialog. `step` is its place in a script.
+fn begin(tab: String, statement: String, limit: bool, slot: Slot, step: Option<(usize, usize)>) {
     let state = ui();
     let Some(connection) = state
         .tabs
@@ -168,51 +195,195 @@ pub fn start(tab: String, statement: String, limit: bool) {
         )
         .await;
         match prepared {
-            Err(e) => state.notice.set(Some(e.to_string())),
+            Err(e) => failed(&tab, Some(e.to_string())),
             Ok(p) if p.refused.is_none() && p.count.is_none() && p.name_required.is_none() => {
-                run(tab, connection, statement, p.token, None, limit).await;
+                run(tab, connection, statement, p.token, None, limit, slot).await;
             }
             Ok(p) => state.dialog.set(Dialog::Confirm {
                 tab,
                 connection,
                 statement,
                 prepared: p,
+                step,
             }),
         }
     });
 }
 
-async fn run(
+/// Starts `statement` on its own in tab `tab`.
+pub fn start(tab: String, statement: String, limit: bool) {
+    begin(tab, statement, limit, Slot::Replace, None);
+}
+
+/// Runs every statement of a script in tab `tab`, one after another; each goes through the
+/// guardrails and is read to its end before the next one starts. It stops at the first that
+/// fails or is not confirmed.
+pub fn run_all(tab: String, statements: Vec<String>, limit: bool) {
+    let state = ui();
+    let statements: Vec<String> = statements.into_iter().filter(|s| !s.is_empty()).collect();
+    if statements.len() < 2 {
+        if let Some(one) = statements.into_iter().next() {
+            start(tab, one, limit);
+        }
+        return;
+    }
+    if let Some(out) = state.outputs.with_untracked(|m| m.get(&tab).copied()) {
+        close_all(out);
+    }
+    state.scripts.update(|m| {
+        m.insert(
+            tab.clone(),
+            crate::state::Script {
+                statements,
+                next: 0,
+                limit,
+            },
+        );
+    });
+    step(tab);
+}
+
+/// Starts the next statement of the script in tab `tab`, or ends the script.
+fn step(tab: String) {
+    let state = ui();
+    let Some(script) = state.scripts.with_untracked(|m| m.get(&tab).cloned()) else {
+        return;
+    };
+    let total = script.statements.len();
+    let Some(statement) = script.statements.get(script.next).cloned() else {
+        state.scripts.update(|m| {
+            m.remove(&tab);
+        });
+        state
+            .notice
+            .set(Some(format!("Ran all {total} statements.")));
+        return;
+    };
+    state.scripts.update(|m| {
+        if let Some(s) = m.get_mut(&tab) {
+            s.next += 1;
+        }
+    });
+    let at = (script.next + 1, total);
+    begin(tab, statement, script.limit, Slot::Append, Some(at));
+}
+
+/// Says that the statement a script in tab `tab` is at failed, with `error` when it has no result
+/// to show it in, and stops the script. Without a script, `error` is said alone.
+fn failed(tab: &str, error: Option<String>) {
+    let state = ui();
+    let script = state.scripts.with_untracked(|m| m.get(tab).cloned());
+    let text = match (script, error) {
+        (Some(s), e) => {
+            let head = format!(
+                "Statement {} of {} failed, so the ones after it did not run",
+                s.next,
+                s.statements.len()
+            );
+            match e {
+                Some(e) => format!("{head}: {e}"),
+                None => format!("{head}."),
+            }
+        }
+        (None, Some(e)) => e,
+        (None, None) => return,
+    };
+    state.notice.set(Some(text));
+    stop_script(tab);
+}
+
+/// Stops the script in tab `tab`, if one runs: the statements after the current one do not run.
+pub fn stop_script(tab: &str) {
+    ui().scripts.update(|m| {
+        m.remove(tab);
+    });
+}
+
+/// Closes every result of `out`.
+fn close_all(out: crate::state::Output) {
+    let state = ui();
+    let old = out.results.get_untracked();
+    if old.is_empty() {
+        return;
+    }
+    out.results.set(Vec::new());
+    leptos::task::spawn_local(async move {
+        for rid in old {
+            let _ = ipc::call::<_, ()>("close_result", &serde_json::json!({ "result": rid })).await;
+        }
+        // A result still being read is recorded in the history when it closes.
+        state.history_changed();
+    });
+}
+
+/// Runs a statement the guardrails allowed, puts its result in `slot`, and goes on with the
+/// script when it is part of one.
+pub async fn run(
     tab: String,
     connection: ConnectionId,
     statement: String,
     token: u64,
     typed_name: Option<String>,
     limit: bool,
+    slot: Slot,
 ) {
     let state = ui();
     let Some(out) = state.outputs.with_untracked(|m| m.get(&tab).copied()) else {
         return;
     };
-    if let Some(old) = out.result.get_untracked() {
-        let _ = ipc::call::<_, ()>("close_result", &serde_json::json!({ "result": old })).await;
-        // A result still being read is recorded in the history when it closes.
-        state.history_changed();
+    match slot {
+        Slot::Replace => close_all(out),
+        Slot::Append => {}
+        Slot::Instead(old) => {
+            let _ = ipc::call::<_, ()>("close_result", &serde_json::json!({ "result": old })).await;
+            state.history_changed();
+        }
     }
-    match ipc::call::<_, u64>(
+    let reply = ipc::call::<_, u64>(
         "run",
         &serde_json::json!({
             "id": connection, "statement": statement, "token": token,
             "typedName": typed_name, "limit": limit,
         }),
     )
-    .await
-    {
-        Ok(rid) => {
-            out.statement.set(Some((connection, statement)));
-            out.result.set(Some(rid));
+    .await;
+    let rid = match reply {
+        Ok(rid) => rid,
+        Err(e) => {
+            failed(&tab, Some(e.to_string()));
+            return;
         }
-        Err(e) => state.notice.set(Some(e.to_string())),
+    };
+    out.statements.update(|m| {
+        m.insert(rid, statement);
+    });
+    out.results.update(|r| match slot {
+        Slot::Instead(old) => match r.iter_mut().find(|x| **x == old) {
+            Some(x) => *x = rid,
+            None => r.push(rid),
+        },
+        Slot::Append => r.push(rid),
+        Slot::Replace => *r = vec![rid],
+    });
+    if slot != Slot::Append {
+        return;
+    }
+    // The next statement of a script starts only once this one has ended.
+    match ipc::call::<_, ExecutionStatus>("finish", &serde_json::json!({ "result": rid })).await {
+        Ok(status) => {
+            let broke = status.error.is_some();
+            out.statuses.update(|m| {
+                m.insert(rid, status);
+            });
+            state.history_changed();
+            if broke {
+                // Its result shows the error.
+                failed(&tab, None);
+            } else {
+                step(tab);
+            }
+        }
+        Err(e) => failed(&tab, Some(e.to_string())),
     }
 }
 
@@ -397,7 +568,7 @@ pub fn Workspace() -> impl IntoView {
         }
     });
 
-    // A statement the guardrail dialog approved.
+    // A statement the guardrail dialog approved, on its own or as the next of a script.
     Effect::new(move |_| {
         if let Some(Approved {
             tab,
@@ -409,8 +580,14 @@ pub fn Workspace() -> impl IntoView {
         {
             state.approved.set(None);
             state.notice.set(None);
-            let l = limit.get_untracked();
-            leptos::task::spawn_local(run(tab, connection, statement, token, typed_name, l));
+            let script = state
+                .scripts
+                .with_untracked(|m| m.get(&tab).map(|s| s.limit));
+            let (l, slot) = match script {
+                Some(l) => (l, Slot::Append),
+                None => (limit.get_untracked(), Slot::Replace),
+            };
+            leptos::task::spawn_local(run(tab, connection, statement, token, typed_name, l, slot));
         }
     });
 
@@ -434,12 +611,36 @@ pub fn Workspace() -> impl IntoView {
         });
     };
 
+    // Cancels the statement running in the tab, and what a script would run after it.
     let cancel = move |_| {
-        if let Some(rid) = output().and_then(|o| o.result.get_untracked()) {
+        if let Some(id) = state.current_untracked() {
+            stop_script(&id);
+        }
+        if let Some(rid) = output().and_then(|o| o.last()) {
             leptos::task::spawn_local(async move {
                 let _ = ipc::call::<_, ()>("cancel", &serde_json::json!({ "result": rid })).await;
             });
         }
+    };
+
+    // Runs every statement of the tab, or of the selection, one after another.
+    let run_everything = move || {
+        let (Some(id), Some(el)) = (state.current(), area.get_untracked()) else {
+            return;
+        };
+        let value = el.value();
+        let s = el.selection_start().ok().flatten().unwrap_or(0);
+        let e = el.selection_end().ok().flatten().unwrap_or(s);
+        let text = if e > s {
+            value
+                .get(byte_offset(&value, s)..byte_offset(&value, e))
+                .unwrap_or("")
+                .to_owned()
+        } else {
+            value
+        };
+        state.notice.set(None);
+        run_all(id, statements_of(dialect(), &text), limit.get_untracked());
     };
 
     // Formats the selection, or all of the text when nothing is selected.
@@ -516,7 +717,9 @@ pub fn Workspace() -> impl IntoView {
                     <button class="btn small save-query" on:click=move |_| tabs::save_current()
                         disabled=move || current().is_none() title="Ctrl+S">"Save query"</button>
                     <button class="btn small" on:click=cancel
-                        disabled=move || output().is_none_or(|o| o.result.get().is_none())>"Cancel"</button>
+                        disabled=move || output().is_none_or(|o| o.results.with(Vec::is_empty))>"Cancel"</button>
+                    <button class="btn small run-all" on:click=move |_| run_everything()
+                        disabled=move || live().is_none() title="Shift+Ctrl+Enter">"Run all"</button>
                     <button class="btn small primary" on:click=move |_| run_current()
                         disabled=move || live().is_none() title="Ctrl+Enter">"Run"</button>
                 </div>
@@ -553,7 +756,10 @@ pub fn Workspace() -> impl IntoView {
                     on:blur=move |_| if let Some(id) = state.current() { tabs::keep(&id) }
                     on:keydown=move |ev: web_sys::KeyboardEvent| {
                         let ctrl = ev.ctrl_key() || ev.meta_key();
-                        if ctrl && ev.key() == "Enter" {
+                        if ctrl && ev.shift_key() && ev.key() == "Enter" {
+                            ev.prevent_default();
+                            run_everything();
+                        } else if ctrl && ev.key() == "Enter" {
                             ev.prevent_default();
                             run_current();
                         } else if ctrl && ev.key().eq_ignore_ascii_case("s") {
@@ -576,14 +782,14 @@ pub fn Workspace() -> impl IntoView {
                         let shown = id.clone();
                         let out = state.outputs.with_untracked(|m| m.get(&id).copied()).unwrap_or_else(crate::state::Output::new);
                         // Saved grid edits: run the statement again to show the rows as they are now.
-                        let rerun = Callback::new(move |()| {
-                            if let Some((_, statement)) = out.statement.get_untracked() {
-                                start(id.clone(), statement, limit.get_untracked());
+                        let rerun = Callback::new(move |rid: u64| {
+                            if let Some(statement) = out.statements.with_untracked(|m| m.get(&rid).cloned()) {
+                                begin(id.clone(), statement, limit.get_untracked(), Slot::Instead(rid), None);
                             }
                         });
                         view! {
                             <div class="pane" hidden=move || current().as_ref() != Some(&shown)>
-                                <Results result=out.result pending=out.pending on_saved=rerun />
+                                <Results out=out on_saved=rerun />
                             </div>
                         }
                     }
@@ -748,6 +954,22 @@ mod tests {
             &[(Schema, "public"), (Schema, "public")],
         );
         assert!(browse_statement(&c, &n).is_none(), "a schema has no rows");
+    }
+
+    #[test]
+    fn a_script_splits_into_its_statements() {
+        assert_eq!(
+            statements_of(
+                Some(SqlDialect::Postgres),
+                "create table t (a int);\n\ninsert into t values (1); select * from t;"
+            ),
+            [
+                "create table t (a int)",
+                "insert into t values (1)",
+                "select * from t"
+            ]
+        );
+        assert_eq!(statements_of(None, " {\"ping\": 1} "), ["{\"ping\": 1}"]);
     }
 
     #[test]
