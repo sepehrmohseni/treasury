@@ -216,6 +216,91 @@ async fn run(
     }
 }
 
+/// The editor's text laid out for reading: SQL through the formatter, MongoDB commands as
+/// indented JSON. `None` when it cannot be laid out without changing it.
+fn formatted(dialect: Option<SqlDialect>, text: &str) -> Option<String> {
+    match dialect {
+        Some(d) => treasury_sql::format::format(d, text),
+        None => reindent_json(text),
+    }
+}
+
+/// `text` as indented JSON with every key where it was (a command's name must come first), or
+/// `None` if it is not one JSON value.
+fn reindent_json(text: &str) -> Option<String> {
+    let original: serde_json::Value = serde_json::from_str(text).ok()?;
+    let chars: Vec<char> = text.trim().chars().collect();
+    let mut out = String::new();
+    let mut depth = 0usize;
+    let (mut in_string, mut escaped) = (false, false);
+    let newline = |out: &mut String, depth: usize| {
+        out.push('\n');
+        out.push_str(&"  ".repeat(depth));
+    };
+    let mut i = 0;
+    while let Some(&c) = chars.get(i) {
+        i += 1;
+        if in_string {
+            out.push(c);
+            match (escaped, c) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_string = true;
+                out.push(c);
+            }
+            '{' | '[' => {
+                let close = if c == '{' { '}' } else { ']' };
+                let next = chars[i..].iter().position(|n| !n.is_whitespace());
+                if next.is_some_and(|n| chars[i + n] == close) {
+                    out.push(c);
+                    out.push(close);
+                    i += next.unwrap_or(0) + 1;
+                } else {
+                    out.push(c);
+                    depth += 1;
+                    newline(&mut out, depth);
+                }
+            }
+            '}' | ']' => {
+                depth = depth.saturating_sub(1);
+                newline(&mut out, depth);
+                out.push(c);
+            }
+            ',' => {
+                out.push(c);
+                newline(&mut out, depth);
+            }
+            ':' => out.push_str(": "),
+            c if c.is_whitespace() => {}
+            c => out.push(c),
+        }
+    }
+    (serde_json::from_str::<serde_json::Value>(&out).ok()? == original).then_some(out)
+}
+
+/// Replaces `start..end` (in the DOM's units) of the editor with `text` the way typing would, so
+/// Ctrl+Z takes it back. `false` when the webview refused.
+fn replace_in_editor(el: &web_sys::HtmlTextAreaElement, start: u32, end: u32, text: &str) -> bool {
+    use wasm_bindgen::JsCast;
+    let _ = el.focus();
+    let _ = el.set_selection_range(start, end);
+    document()
+        .dyn_into::<web_sys::HtmlDocument>()
+        .ok()
+        .and_then(|d| {
+            d.exec_command_with_show_ui_and_value("insertText", false, text)
+                .ok()
+        })
+        .unwrap_or(false)
+}
+
 /// The DOM's offset of the caret in `el`.
 fn caret(el: &web_sys::HtmlTextAreaElement) -> u32 {
     el.selection_start().ok().flatten().unwrap_or(0)
@@ -357,6 +442,37 @@ pub fn Workspace() -> impl IntoView {
         }
     };
 
+    // Formats the selection, or all of the text when nothing is selected.
+    let format_text = move || {
+        let (Some(id), Some(el)) = (state.current(), area.get_untracked()) else {
+            return;
+        };
+        let value = el.value();
+        let s = el.selection_start().ok().flatten().unwrap_or(0);
+        let e = el.selection_end().ok().flatten().unwrap_or(s);
+        let (s, e) = if e > s {
+            (s, e)
+        } else {
+            (0, value.encode_utf16().count() as u32)
+        };
+        let (from, to) = (byte_offset(&value, s), byte_offset(&value, e));
+        let Some(piece) = value.get(from..to) else {
+            return;
+        };
+        match formatted(dialect(), piece) {
+            Some(f) if f == piece => {}
+            Some(f) => {
+                if !replace_in_editor(&el, s, e, &f) {
+                    tabs::set_text(&id, format!("{}{f}{}", &value[..from], &value[to..]));
+                }
+            }
+            None => state.notice.set(Some(
+                "Treasury could not lay this out without changing it, so it is left as it is."
+                    .into(),
+            )),
+        }
+    };
+
     // The caret moved: remember it for when the tab is shown again.
     let track_caret = move || {
         if let (Some(id), Some(el)) = (state.current(), area.get_untracked()) {
@@ -395,6 +511,8 @@ pub fn Workspace() -> impl IntoView {
                             {if l.read_only { "Unlock writes" } else { "Lock writes" }}
                         </button>
                     })}
+                    <button class="btn small format" on:click=move |_| format_text()
+                        disabled=move || current().is_none() title="Shift+Alt+F">"Format"</button>
                     <button class="btn small save-query" on:click=move |_| tabs::save_current()
                         disabled=move || current().is_none() title="Ctrl+S">"Save query"</button>
                     <button class="btn small" on:click=cancel
@@ -441,6 +559,9 @@ pub fn Workspace() -> impl IntoView {
                         } else if ctrl && ev.key().eq_ignore_ascii_case("s") {
                             ev.prevent_default();
                             tabs::save_current();
+                        } else if ev.shift_key() && ev.alt_key() && ev.code() == "KeyF" {
+                            ev.prevent_default();
+                            format_text();
                         }
                     }
                 ></textarea>
@@ -627,6 +748,24 @@ mod tests {
             &[(Schema, "public"), (Schema, "public")],
         );
         assert!(browse_statement(&c, &n).is_none(), "a schema has no rows");
+    }
+
+    #[test]
+    fn json_is_indented_with_its_keys_in_order() {
+        let f = reindent_json(
+            r#"{"find": "users", "filter": {"name": "a,b {x}", "tags": []}, "$db": "app"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            f,
+            "{\n  \"find\": \"users\",\n  \"filter\": {\n    \"name\": \"a,b {x}\",\n    \"tags\": []\n  },\n  \"$db\": \"app\"\n}"
+        );
+        assert!(f.find("find").unwrap() < f.find("filter").unwrap());
+        assert_eq!(
+            reindent_json(r#"{"a": "say \"hi\""}"#).unwrap(),
+            "{\n  \"a\": \"say \\\"hi\\\"\"\n}"
+        );
+        assert!(reindent_json("db.users.find({})").is_none());
     }
 
     #[test]

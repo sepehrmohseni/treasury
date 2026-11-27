@@ -250,6 +250,17 @@ mod desktop {
         s.click_css(".list.history .entry");
         s.wait_text(".tab-strip .etab.on", "Query 3", 10);
         s.wait_text(".editor pre", "INSERT INTO smoke", 10);
+
+        // Format lays the statement out on lines, as one edit that can be undone.
+        s.click_css(".toolbar .format");
+        s.wait_text(".editor pre", "VALUES\n", 10);
+        // WebDriver's keys do not reach WebKit's editing commands, so the page is asked to undo,
+        // as Ctrl+Z does for a person.
+        assert_eq!(
+            s.script("return document.execCommand('undo')"),
+            serde_json::json!(true)
+        );
+        s.wait_text(".editor pre", "INSERT INTO smoke VALUES (1, 'one')", 10);
         s.click_css(".side-views .view-connections");
 
         // A production connection opens read-only, refuses writes until they are unlocked, and
