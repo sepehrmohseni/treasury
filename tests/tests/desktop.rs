@@ -669,6 +669,12 @@ mod desktop {
         shot("20-dark");
         s.click_css(".brand .settings");
         s.wait("#st-theme", 10);
+        // "Check now" asks again whenever you like, says what it found and offers the update,
+        // which shows in the status bar again although "Not now" put it away at start.
+        s.click_css(".dialog .check-now");
+        s.wait_text(".dialog .update-check", "Treasury 99.0.0 is available.", 30);
+        s.wait(".dialog .update-check .install", 10);
+        s.wait_text(".statusbar .update", "Treasury 99.0.0 is available", 10);
         shot("21-settings");
         s.click_css(".dialog .walkthrough");
         s.wait_text(".tour", "Your first five minutes", 10);

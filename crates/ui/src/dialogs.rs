@@ -1213,6 +1213,21 @@ fn SettingsDialog() -> impl IntoView {
     let history = RwSignal::new(true);
     let update_check = RwSignal::new(true);
     let error = RwSignal::new(None::<String>);
+    // What "Check now" found: still asking, the newer version, this one is the latest, or why
+    // GitHub could not be asked.
+    let checked = RwSignal::new(None::<Result<Option<treasury_ipc::UpdateView>, String>>);
+    let checking = RwSignal::new(false);
+    let check_now = move |_| {
+        checking.set(true);
+        leptos::task::spawn_local(async move {
+            let found = crate::app::check_for_update().await;
+            if let Ok(update) = &found {
+                state.update.set(update.clone());
+            }
+            checked.set(Some(found));
+            checking.set(false);
+        });
+    };
     leptos::task::spawn_local(async move {
         let get = |key: &'static str| async move {
             ipc::call::<_, Option<serde_json::Value>>("setting", &serde_json::json!({ "key": key }))
@@ -1299,13 +1314,40 @@ fn SettingsDialog() -> impl IntoView {
                     <div class="field">
                         <span></span>
                         <label><input type="checkbox" prop:checked=move || update_check.get()
-                            on:change=move |ev| update_check.set(event_target_checked(&ev)) />" Check for a new version when Treasury starts"</label>
+                            on:change=move |ev| update_check.set(event_target_checked(&ev)) />" Check for a new version at start and every 6 hours"</label>
+                    </div>
+                    <div class="field">
+                        <span></span>
+                        <span class="update-check">
+                            <button class="btn small check-now" on:click=check_now disabled=move || checking.get()>
+                                {move || if checking.get() { "Checking…" } else { "Check now" }}
+                            </button>
+                            {move || {
+                                let version = state.facts.get().map(|f| f.version).unwrap_or_default();
+                                checked.get().map(|found| match found {
+                                    Ok(Some(u)) => {
+                                        let v = u.version.clone();
+                                        view! {
+                                            <span class="found">{format!("Treasury {} is available.", u.version)}</span>
+                                            <button class="btn small primary install" on:click=move |_| {
+                                                crate::app::install_update(&v);
+                                                close();
+                                            }>"Install and restart"</button>
+                                        }.into_any()
+                                    }
+                                    Ok(None) => view! {
+                                        <span class="detail">{format!("Treasury {version} is the latest version.")}</span>
+                                    }.into_any(),
+                                    Err(e) => view! { <span class="failed">{format!("Could not check: {e}")}</span> }.into_any(),
+                                })
+                            }}
+                        </span>
                     </div>
                     <div class="field">
                         <span></span>
                         <span><button class="btn small walkthrough" on:click=walkthrough>"Show the walkthrough again"</button></span>
                     </div>
-                    <p class="detail">"History stays on this computer, encrypted, and production connections keep none. The version check asks GitHub which release is the latest; it carries nothing about your databases."</p>
+                    <p class="detail">"History stays on this computer, encrypted, and production connections keep none. The version check asks GitHub which release is the latest; it carries nothing about your databases. An update installs only when you choose Install and restart."</p>
                 </div>
                 {move || error.get().map(|e| view! { <div class="note danger dialog-alert" role="alert">{e}</div> })}
                 <footer>

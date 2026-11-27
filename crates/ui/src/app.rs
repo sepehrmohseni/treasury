@@ -34,14 +34,14 @@ pub fn App() -> impl IntoView {
         {
             crate::dialogs::apply_theme(&v);
         }
-        // The one request Treasury makes on its own, unless it is turned off in Settings. A
-        // failed check (offline, say) is not worth interrupting anyone for.
-        if get("update_check").await.and_then(|v| v.as_bool()) != Some(false)
-            && let Ok(found) = ipc::call0::<Option<UpdateView>>("check_update").await
-        {
-            state.update.set(found);
-        }
+        // The one request Treasury makes on its own, unless it is turned off in Settings: at
+        // start, then every few hours while it stays open.
+        background_check().await;
     });
+    let _ = set_interval_with_handle(
+        || leptos::task::spawn_local(background_check()),
+        UPDATE_EVERY,
+    );
     state.reload_connections();
     crate::tabs::load();
     // Ctrl+K (Cmd+K) opens the command palette from anywhere, and closes it again.
@@ -75,6 +75,47 @@ pub fn App() -> impl IntoView {
     }
 }
 
+/// How often an open Treasury asks again whether a newer release exists.
+const UPDATE_EVERY: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+/// Asks GitHub for a newer release unless Settings turned that off. A failed check (offline,
+/// say) is not worth interrupting anyone for; an update found shows in the status bar.
+async fn background_check() {
+    let state = ui();
+    let enabled = ipc::call::<_, Option<serde_json::Value>>(
+        "setting",
+        &serde_json::json!({ "key": "update_check" }),
+    )
+    .await
+    .ok()
+    .flatten()
+    .and_then(|v| v.as_bool())
+        != Some(false);
+    if enabled && let Ok(found) = check_for_update().await {
+        state.update.set(found);
+    }
+}
+
+/// Asks GitHub whether a release newer than this one exists.
+pub async fn check_for_update() -> Result<Option<UpdateView>, String> {
+    ipc::call0::<Option<UpdateView>>("check_update")
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Downloads `version`, checks its signature, installs it and restarts Treasury.
+pub fn install_update(version: &str) {
+    let state = ui();
+    state
+        .notice
+        .set(Some(format!("Downloading Treasury {version}…")));
+    leptos::task::spawn_local(async move {
+        if let Err(e) = ipc::call0::<()>("install_update").await {
+            state.notice.set(Some(e.to_string()));
+        }
+    });
+}
+
 #[component]
 fn StatusBar() -> impl IntoView {
     let state = ui();
@@ -100,14 +141,7 @@ fn StatusBar() -> impl IntoView {
             </span>
             {move || state.update.get().map(|u| {
                 let version = u.version.clone();
-                let install = move |_| {
-                    state.notice.set(Some(format!("Downloading Treasury {version}…")));
-                    leptos::task::spawn_local(async move {
-                        if let Err(e) = ipc::call0::<()>("install_update").await {
-                            state.notice.set(Some(e.to_string()));
-                        }
-                    });
-                };
+                let install = move |_| install_update(&version);
                 view! {
                     <span class="update" title=u.notes.clone().unwrap_or_default()>
                         {format!("Treasury {} is available", u.version)}

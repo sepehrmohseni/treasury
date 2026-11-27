@@ -259,6 +259,9 @@ input[type=checkbox] { accent-color: var(--green); }
 .import-list { border: 1px solid var(--rule); border-radius: 4px; max-height: 320px; overflow: auto; }
 .import-list label { display: grid; grid-template-columns: 22px 1fr auto; gap: 6px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--rule); }
 .import-list .sub { color: var(--faint); font-size: 12px; }
+.update-check { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.update-check .found { color: var(--green-ink); font-weight: 600; }
+.update-check .failed { color: var(--red); }
 .fingerprint { font-family: var(--mono); word-break: break-all; padding: 8px; background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px; }
 
 @media (prefers-reduced-motion: no-preference) { .btn, .item { transition: background-color 100ms, border-color 100ms; } }
