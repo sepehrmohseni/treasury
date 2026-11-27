@@ -41,15 +41,17 @@ refuses a package whose signature does not match the public key in `crates/app/t
 
 ## Signing material
 
-The maintainer keeps the private keys and their passwords outside the repository, in
-`~/treasury-signing/` (mode 0700), with an offline backup. Losing the updater key or the Android
-keystore means existing installs can no longer receive updates.
+The maintainer keeps the private keys and their passwords outside the repository, with an
+offline backup. Losing the updater key or the Android keystore means existing installs can no
+longer receive updates.
+
+The updater key (minisign, password-protected; key id `83BDA098DAA0A99A`) was made by the
+maintainer with `tauri signer generate` and is kept by them; its public key is in the app's
+`tauri.conf.json`. The Android keystore is in `~/treasury-signing/` (mode 0700) on the machine
+that made it:
 
 | File | Purpose |
 |---|---|
-| `updater.key` | Tauri updater private key (minisign, password-protected) |
-| `updater.key.password` | Its password |
-| `updater.key.pub` | Public key, also in the app's `tauri.conf.json` |
 | `android-release.jks` | Android release keystore (PKCS12), alias `treasury`, RSA 4096, valid until 2054 |
 | `android-release.jks.base64` | The same keystore, base64-encoded for the secret below |
 | `android-keystore.password` | Store and key password |
