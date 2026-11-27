@@ -3,6 +3,13 @@
 Notable changes to Treasury, grouped as Added, Changed and Fixed. Versions follow Semantic
 Versioning.
 
+## 0.1.3 (2026-11-27)
+
+### Added
+
+- ui: Check for a new version from Settings, and every 6 hours while open
+- ui: A database navigator and an editor for each table
+
 ## 0.1.2 (2026-11-27)
 
 ### Added
