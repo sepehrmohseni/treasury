@@ -5,7 +5,7 @@ use crate::ipc;
 use crate::state::{Approved, Dialog, ui};
 use leptos::prelude::*;
 use treasury_core::config::{ConnectionConfig, Endpoint, Engine, Environment, SecretSlot, TlsMode};
-use treasury_ipc::{ImportPreview, LiveView, Prepared, RowEdits, SecretInput};
+use treasury_ipc::{ImportPreview, LiveView, Prepared, RowEdits, SavedQueryView, SecretInput};
 
 /// The engines this version connects to.
 const ENGINES: [Engine; 5] = [
@@ -30,13 +30,24 @@ pub fn Dialogs() -> impl IntoView {
             view! { <ImportDialog path=path preview=preview /> }.into_any()
         }
         Dialog::Confirm {
+            tab,
             connection,
             statement,
             prepared,
         } => view! {
-            <ConfirmDialog connection=connection statement=statement prepared=prepared />
+            <ConfirmDialog tab=tab connection=connection statement=statement prepared=prepared />
         }
         .into_any(),
+        Dialog::SaveQuery { tab, query } => {
+            view! { <SaveQueryDialog tab=tab query=query /> }.into_any()
+        }
+        Dialog::DeleteQuery(q) => view! { <DeleteQueryDialog query=q /> }.into_any(),
+        Dialog::CloseTab {
+            tab,
+            unsaved_text,
+            pending,
+        } => view! { <CloseTabDialog tab=tab unsaved_text=unsaved_text pending=pending /> }
+            .into_any(),
         Dialog::Settings => view! { <SettingsDialog /> }.into_any(),
         Dialog::ReviewEdits {
             result,
@@ -397,6 +408,7 @@ fn ImportDialog(path: String, preview: ImportPreview) -> impl IntoView {
 
 #[component]
 fn ConfirmDialog(
+    tab: String,
     connection: treasury_core::config::ConnectionId,
     statement: String,
     prepared: Prepared,
@@ -420,6 +432,7 @@ fn ConfirmDialog(
     let (conn_run, stmt_run) = (connection.clone(), statement.clone());
     let go = move |_| {
         state.approved.set(Some(Approved {
+            tab: tab.clone(),
             connection: conn_run.clone(),
             statement: stmt_run.clone(),
             token,
@@ -527,6 +540,178 @@ fn ReviewDialog(
                 <footer>
                     <button class="btn" on:click=move |_| close()>"Keep editing"</button>
                     <button class="btn primary" on:click=save disabled=move || saving.get()>"Save changes"</button>
+                </footer>
+            </div>
+        </div>
+    }
+}
+
+/// Saving a tab as a new query, or renaming and moving a saved one (with deleting it).
+#[component]
+fn SaveQueryDialog(tab: Option<String>, query: Option<SavedQueryView>) -> impl IntoView {
+    let state = ui();
+    let existing = query.clone();
+    let name = RwSignal::new(query.as_ref().map(|q| q.name.clone()).unwrap_or_else(|| {
+        tab.as_deref()
+            .and_then(|t| {
+                state
+                    .tabs
+                    .with_untracked(|all| all.iter().find(|x| x.id == t).map(|x| x.title.clone()))
+            })
+            .filter(|t| !t.starts_with("Query "))
+            .unwrap_or_default()
+    }));
+    let folder = RwSignal::new(query.as_ref().map(|q| q.folder.clone()).unwrap_or_default());
+    let everywhere = RwSignal::new(query.as_ref().is_some_and(|q| q.connection.is_none()));
+    let error = RwSignal::new(None::<String>);
+    let busy = RwSignal::new(false);
+    let connection = tab
+        .as_deref()
+        .and_then(|t| {
+            state
+                .tabs
+                .with_untracked(|all| all.iter().find(|x| x.id == t).map(|x| x.connection.clone()))
+        })
+        .or_else(|| query.as_ref().and_then(|q| q.connection.clone()))
+        .or_else(|| state.active.get_untracked());
+    let tab_for_save = tab.clone();
+    let save = move |ev: web_sys::SubmitEvent| {
+        ev.prevent_default();
+        busy.set(true);
+        let id = existing.as_ref().map(|q| q.id.clone());
+        let renaming = id.is_some();
+        let text = tab_for_save.as_deref().map(crate::tabs::text_of);
+        let args = serde_json::json!({
+            "id": id,
+            "name": name.get_untracked(),
+            "folder": folder.get_untracked(),
+            "connection": if everywhere.get_untracked() { None } else { connection.clone() },
+            // A rename keeps the saved text.
+            "text": if renaming { None } else { text },
+        });
+        let tab = tab_for_save.clone();
+        leptos::task::spawn_local(async move {
+            match ipc::call::<_, SavedQueryView>("save_query", &args).await {
+                Ok(q) => {
+                    match (&tab, renaming) {
+                        (Some(t), false) => crate::tabs::link(t, &q),
+                        _ => crate::tabs::renamed(&q),
+                    }
+                    state.notice.set(Some(format!("Saved \"{}\".", q.name)));
+                    close();
+                }
+                Err(e) => {
+                    busy.set(false);
+                    error.set(Some(e.to_string()));
+                }
+            }
+        });
+    };
+    let delete = query.clone().map(|q| {
+        view! {
+            <button type="button" class="btn danger delete-query" on:click=move |_| state.dialog.set(Dialog::DeleteQuery(q.clone()))>"Delete"</button>
+        }
+    });
+    view! {
+        <div class="backdrop">
+            <form class="dialog" role="dialog" aria-modal="true" aria-labelledby="sq-title" on:submit=save>
+                <header id="sq-title">{if query.is_some() { "Saved query" } else { "Save query" }}</header>
+                <div class="body">
+                    <div class="field">
+                        <label for="sq-name">"Name"</label>
+                        <input id="sq-name" autocomplete="off" prop:value=move || name.get()
+                            on:input=move |ev| name.set(event_target_value(&ev)) />
+                    </div>
+                    <div class="field">
+                        <label for="sq-folder">"Folder"</label>
+                        <input id="sq-folder" autocomplete="off" placeholder="reports/monthly" prop:value=move || folder.get()
+                            on:input=move |ev| folder.set(event_target_value(&ev)) />
+                    </div>
+                    <div class="field">
+                        <span></span>
+                        <label><input type="checkbox" id="sq-everywhere" prop:checked=move || everywhere.get()
+                            on:change=move |ev| everywhere.set(event_target_checked(&ev)) />" Show on every connection"</label>
+                    </div>
+                    {move || error.get().map(|e| view! { <div class="note danger" role="alert">{e}</div> })}
+                </div>
+                <footer>
+                    {delete}
+                    <button type="button" class="btn" on:click=move |_| close()>"Cancel"</button>
+                    <button type="submit" class="btn primary" disabled=move || busy.get() || name.get().trim().is_empty()>"Save"</button>
+                </footer>
+            </form>
+        </div>
+    }
+}
+
+#[component]
+fn DeleteQueryDialog(query: SavedQueryView) -> impl IntoView {
+    let state = ui();
+    let q = query.clone();
+    let delete = move |_| {
+        let q = q.clone();
+        leptos::task::spawn_local(async move {
+            match ipc::call::<_, ()>("delete_saved_query", &serde_json::json!({ "id": q.id })).await
+            {
+                Ok(()) => {
+                    crate::tabs::unlink(&q.id);
+                    state.notice.set(Some(format!("Deleted \"{}\".", q.name)));
+                }
+                Err(e) => state.notice.set(Some(e.to_string())),
+            }
+            close();
+        });
+    };
+    view! {
+        <div class="backdrop">
+            <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dq-title">
+                <header id="dq-title">"Delete saved query"</header>
+                <div class="body">
+                    <p>{format!("Delete \"{}\"? This cannot be undone. Tabs that show it keep their text.", query.name)}</p>
+                </div>
+                <footer>
+                    <button class="btn" on:click=move |_| close()>"Cancel"</button>
+                    <button class="btn danger" on:click=delete>"Delete saved query"</button>
+                </footer>
+            </div>
+        </div>
+    }
+}
+
+#[component]
+fn CloseTabDialog(tab: String, unsaved_text: bool, pending: usize) -> impl IntoView {
+    let state = ui();
+    let title = state
+        .tabs
+        .with_untracked(|t| t.iter().find(|x| x.id == tab).map(|x| x.title.clone()))
+        .unwrap_or_default();
+    let id = tab.clone();
+    let save_first = tab.clone();
+    view! {
+        <div class="backdrop">
+            <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="ct-title">
+                <header id="ct-title">{format!("Close \"{title}\"?")}</header>
+                <div class="body">
+                    {unsaved_text.then(|| view! { <p>"Its text is not saved as a query, so closing the tab discards it."</p> })}
+                    {(pending > 0).then(|| view! { <p>{if pending == 1 {
+                        "Its result has 1 grid edit that is not saved, which is lost too.".to_owned()
+                    } else {
+                        format!("Its result has {pending} grid edits that are not saved, which are lost too.")
+                    }}</p> })}
+                </div>
+                <footer>
+                    <button class="btn" on:click=move |_| close()>"Keep it open"</button>
+                    {unsaved_text.then(|| view! {
+                        <button class="btn" on:click=move |_| {
+                            crate::tabs::show(save_first.clone());
+                            close();
+                            crate::tabs::save_current();
+                        }>"Save query"</button>
+                    })}
+                    <button class="btn danger close-tab" on:click=move |_| {
+                        close();
+                        crate::tabs::close(id.clone());
+                    }>"Close tab"</button>
                 </footer>
             </div>
         </div>

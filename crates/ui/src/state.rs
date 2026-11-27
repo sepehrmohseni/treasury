@@ -1,11 +1,11 @@
-//! The interface's state, shared through Leptos context.
+//! The interface's state, shared by every component.
 
 use leptos::prelude::*;
 use std::collections::HashMap;
 use treasury_core::config::{ConnectionConfig, ConnectionId};
 use treasury_ipc::{
     AppFacts, ConnectionView, HostKeyQuestion, ImportPreview, LiveView, Prepared, RowEdits,
-    UpdateView,
+    SavedQueryView, UpdateView,
 };
 
 /// A dialog over the window; one at a time.
@@ -20,8 +20,9 @@ pub enum Dialog {
         path: String,
         preview: ImportPreview,
     },
-    /// What the guardrails need before a statement runs.
+    /// What the guardrails need before a statement runs in tab `tab`.
     Confirm {
+        tab: String,
         connection: ConnectionId,
         statement: String,
         prepared: Prepared,
@@ -37,6 +38,60 @@ pub enum Dialog {
         statements: Vec<String>,
         edits: RowEdits,
     },
+    /// Saving tab `tab` as a new query, or renaming and moving `query`.
+    SaveQuery {
+        tab: Option<String>,
+        query: Option<SavedQueryView>,
+    },
+    /// Deleting a saved query.
+    DeleteQuery(SavedQueryView),
+    /// Closing a tab that holds work not saved anywhere else.
+    CloseTab {
+        tab: String,
+        /// Its text is not saved as a query.
+        unsaved_text: bool,
+        /// Grid edits not saved yet.
+        pending: usize,
+    },
+}
+
+/// An editor tab as the strip shows it. Its text is in [`Ui::tab_text`], its result in
+/// [`Ui::outputs`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tab {
+    pub id: String,
+    pub connection: ConnectionId,
+    pub title: String,
+    pub saved_query: Option<String>,
+    /// Its place in the strip, kept by the app.
+    pub position: u32,
+}
+
+/// Where a tab's statements put their result.
+#[derive(Clone, Copy)]
+pub struct Output {
+    pub result: RwSignal<Option<u64>>,
+    /// The statement that produced the result, to run again after its rows were edited.
+    pub statement: RwSignal<Option<(ConnectionId, String)>>,
+    /// Grid edits not saved yet.
+    pub pending: RwSignal<usize>,
+}
+
+impl Output {
+    pub fn new() -> Self {
+        Self {
+            result: RwSignal::new(None),
+            statement: RwSignal::new(None),
+            pending: RwSignal::new(0),
+        }
+    }
+}
+
+/// What the sidebar lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SideView {
+    Connections,
+    Queries,
 }
 
 /// Everything the components share.
@@ -52,22 +107,38 @@ pub struct Ui {
     pub notice: RwSignal<Option<String>>,
     pub hints: RwSignal<bool>,
     pub tutorial_done: RwSignal<bool>,
-    /// The editor text of each connection.
-    pub texts: RwSignal<HashMap<ConnectionId, String>>,
+    /// Editor tabs of every connection, in strip order.
+    pub tabs: RwSignal<Vec<Tab>>,
+    /// The tabs kept by the app have been read.
+    pub tabs_loaded: RwSignal<bool>,
+    /// Each tab's editor text.
+    pub tab_text: RwSignal<HashMap<String, String>>,
+    /// Each tab's cursor, in characters.
+    pub cursors: RwSignal<HashMap<String, u32>>,
+    /// The tab shown for each connection.
+    pub current_tab: RwSignal<HashMap<ConnectionId, String>>,
+    /// Each tab's result.
+    pub outputs: RwSignal<HashMap<String, Output>>,
+    /// Saved queries, without their text.
+    pub queries: RwSignal<Vec<SavedQueryView>>,
+    /// The text of each saved query open in a tab, as last saved, to tell a changed tab.
+    pub saved_text: RwSignal<HashMap<String, String>>,
+    pub side_view: RwSignal<SideView>,
     /// Asks the workspace to run a statement the confirm dialog approved.
     pub approved: RwSignal<Option<Approved>>,
     /// The result whose edits the review dialog just saved, so it reads its rows again.
     pub saved: RwSignal<Option<u64>>,
     /// A newer release, found by the check at start.
     pub update: RwSignal<Option<UpdateView>>,
-    /// A statement for the workspace to put in the editor and run, such as the rows of a table
+    /// A tab title and statement for the workspace to open and run, such as the rows of a table
     /// double-clicked in the tree.
-    pub open_rows: RwSignal<Option<String>>,
+    pub open_rows: RwSignal<Option<(String, String)>>,
 }
 
 /// A statement the user confirmed in the guardrail dialog.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Approved {
+    pub tab: String,
     pub connection: ConnectionId,
     pub statement: String,
     pub token: u64,
@@ -86,7 +157,15 @@ impl Ui {
             notice: RwSignal::new(None),
             hints: RwSignal::new(true),
             tutorial_done: RwSignal::new(false),
-            texts: RwSignal::new(HashMap::new()),
+            tabs: RwSignal::new(Vec::new()),
+            tabs_loaded: RwSignal::new(false),
+            tab_text: RwSignal::new(HashMap::new()),
+            cursors: RwSignal::new(HashMap::new()),
+            current_tab: RwSignal::new(HashMap::new()),
+            outputs: RwSignal::new(HashMap::new()),
+            queries: RwSignal::new(Vec::new()),
+            saved_text: RwSignal::new(HashMap::new()),
+            side_view: RwSignal::new(SideView::Connections),
             approved: RwSignal::new(None),
             saved: RwSignal::new(None),
             update: RwSignal::new(None),
@@ -102,6 +181,22 @@ impl Ui {
                 .find(|c| c.config.id == id)
                 .map(|c| c.config.clone())
         })
+    }
+
+    /// The tab shown for the active connection.
+    pub fn current(&self) -> Option<String> {
+        let id = self.active.get()?;
+        self.current_tab.with(|m| m.get(&id).cloned())
+    }
+
+    /// Reloads the saved query list from the app.
+    pub fn reload_queries(self) {
+        leptos::task::spawn_local(async move {
+            match crate::ipc::call0::<Vec<SavedQueryView>>("saved_queries").await {
+                Ok(list) => self.queries.set(list),
+                Err(e) => self.notice.set(Some(e.to_string())),
+            }
+        });
     }
 
     /// Reloads the connection list from the app.

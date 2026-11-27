@@ -7,6 +7,7 @@ use crate::grid::Results;
 use crate::home::set_setting;
 use crate::ipc;
 use crate::state::{Approved, Dialog, ui};
+use crate::tabs;
 use leptos::prelude::*;
 use treasury_core::analyze::Analyzer;
 use treasury_core::config::{ConnectionConfig, ConnectionId, Engine, Environment};
@@ -26,6 +27,8 @@ const HINTS: &[&str] = &[
     "Export streams straight to the file, so results larger than memory export fine.",
     "Double-click a cell of a one-table result to edit it. Nothing is saved until you review the statements.",
     "Double-click a table in the list on the left to see its rows.",
+    "Every tab keeps its text as you type, so it is still there after a restart.",
+    "Ctrl+S saves the tab as a query; saved queries are under Queries on the left.",
 ];
 
 pub fn dialect_of(engine: Engine) -> Option<SqlDialect> {
@@ -144,16 +147,16 @@ fn highlighted(dialect: Option<SqlDialect>, text: &str) -> AnyView {
     parts.into_iter().collect_view().into_any()
 }
 
-/// Where a run's result goes: its id, and the statement that produced it.
-#[derive(Clone, Copy)]
-pub struct Output {
-    pub result: RwSignal<Option<u64>>,
-    pub statement: RwSignal<Option<(ConnectionId, String)>>,
-}
-
-/// Starts `statement`: asks the guardrails first, then runs it or opens their dialog.
-pub fn start(connection: ConnectionId, statement: String, out: Output, limit: bool) {
+/// Starts `statement` in tab `tab`: asks the guardrails first, then runs it or opens their
+/// dialog.
+pub fn start(tab: String, statement: String, limit: bool) {
     let state = ui();
+    let Some(connection) = state
+        .tabs
+        .with_untracked(|t| t.iter().find(|t| t.id == tab).map(|t| t.connection.clone()))
+    else {
+        return;
+    };
     if statement.is_empty() {
         return;
     }
@@ -166,9 +169,10 @@ pub fn start(connection: ConnectionId, statement: String, out: Output, limit: bo
         match prepared {
             Err(e) => state.notice.set(Some(e.to_string())),
             Ok(p) if p.refused.is_none() && p.count.is_none() && p.name_required.is_none() => {
-                run(connection, statement, p.token, None, out, limit).await;
+                run(tab, connection, statement, p.token, None, limit).await;
             }
             Ok(p) => state.dialog.set(Dialog::Confirm {
+                tab,
                 connection,
                 statement,
                 prepared: p,
@@ -178,14 +182,17 @@ pub fn start(connection: ConnectionId, statement: String, out: Output, limit: bo
 }
 
 async fn run(
+    tab: String,
     connection: ConnectionId,
     statement: String,
     token: u64,
     typed_name: Option<String>,
-    out: Output,
     limit: bool,
 ) {
     let state = ui();
+    let Some(out) = state.outputs.with_untracked(|m| m.get(&tab).copied()) else {
+        return;
+    };
     if let Some(old) = out.result.get_untracked() {
         let _ = ipc::call::<_, ()>("close_result", &serde_json::json!({ "result": old })).await;
     }
@@ -206,10 +213,14 @@ async fn run(
     }
 }
 
+/// The DOM's offset of the caret in `el`.
+fn caret(el: &web_sys::HtmlTextAreaElement) -> u32 {
+    el.selection_start().ok().flatten().unwrap_or(0)
+}
+
 #[component]
 pub fn Workspace() -> impl IntoView {
     let state = ui();
-    let result = RwSignal::new(None::<u64>);
     let limit = RwSignal::new(true);
     let hint = RwSignal::new((js_sys::Math::random() * HINTS.len() as f64) as usize % HINTS.len());
     let area = NodeRef::<leptos::html::Textarea>::new();
@@ -222,28 +233,36 @@ pub fn Workspace() -> impl IntoView {
             .and_then(|id| state.live.with(|m| m.get(&id).cloned()))
     };
     let dialect = move || config().and_then(|c| dialect_of(c.engine));
+    let current = move || state.current();
     let text = move || {
-        state
-            .active
-            .get()
-            .and_then(|id| state.texts.with(|t| t.get(&id).cloned()))
+        current()
+            .and_then(|t| state.tab_text.with(|m| m.get(&t).cloned()))
             .unwrap_or_default()
     };
-    let set_text = move |value: String| {
-        if let Some(id) = state.active.get_untracked() {
-            state.texts.update(|t| {
-                t.insert(id, value);
-            });
-        }
-    };
+    let output = move || current().and_then(|t| state.outputs.with(|m| m.get(&t).copied()));
 
-    // The statement whose result is shown, to run again after its rows were edited.
-    let out = Output {
-        result,
-        statement: RwSignal::new(None),
-    };
+    // The active connection always has a tab to show.
+    Effect::new(move |_| tabs::ensure_tab());
+
+    // A tab just shown gets the focus, with the caret where it was left.
+    Effect::new(move |_| {
+        let Some(id) = current() else {
+            return;
+        };
+        let at = state
+            .cursors
+            .with_untracked(|m| m.get(&id).copied())
+            .unwrap_or(0);
+        request_animation_frame(move || {
+            if let Some(el) = area.get_untracked() {
+                let _ = el.focus();
+                let _ = el.set_selection_range(at, at);
+            }
+        });
+    });
+
     let run_current = move || {
-        let (Some(id), Some(el)) = (state.active.get_untracked(), area.get_untracked()) else {
+        let (Some(id), Some(el)) = (state.current(), area.get_untracked()) else {
             return;
         };
         let value = el.value();
@@ -257,35 +276,43 @@ pub fn Workspace() -> impl IntoView {
         );
         // A new run clears old messages; the run after saved edits keeps "Saved".
         state.notice.set(None);
-        start(id, statement, out, limit.get_untracked());
+        start(id, statement, limit.get_untracked());
     };
 
-    // A table double-clicked in the tree: show its rows.
+    // A table double-clicked in the tree: its rows, in a tab of their own unless one already
+    // holds that statement.
     Effect::new(move |_| {
-        if let Some(statement) = state.open_rows.get() {
-            state.open_rows.set(None);
-            if let Some(id) = state.active.get_untracked() {
-                state.texts.update(|t| {
-                    t.insert(id.clone(), statement.clone());
-                });
-                state.notice.set(None);
-                start(id, statement, out, limit.get_untracked());
+        let Some((title, statement)) = state.open_rows.get() else {
+            return;
+        };
+        state.open_rows.set(None);
+        let Some(connection) = state.active.get_untracked() else {
+            return;
+        };
+        let existing = state.tabs.with_untracked(|t| {
+            t.iter()
+                .find(|t| t.connection == connection && tabs::text_of(&t.id) == statement)
+                .map(|t| t.id.clone())
+        });
+        state.notice.set(None);
+        let l = limit.get_untracked();
+        match existing {
+            Some(id) => {
+                tabs::show(id.clone());
+                start(id, statement, l);
             }
-        }
-    });
-
-    // Saved grid edits: run the statement again to show the rows as they are now.
-    let rerun = Callback::new(move |()| {
-        if let Some((id, statement)) = out.statement.get_untracked()
-            && state.active.get_untracked().as_ref() == Some(&id)
-        {
-            start(id, statement, out, limit.get_untracked());
+            None => leptos::task::spawn_local(async move {
+                if let Some(id) = tabs::open(connection, title, statement.clone(), None).await {
+                    start(id, statement, l);
+                }
+            }),
         }
     });
 
     // A statement the guardrail dialog approved.
     Effect::new(move |_| {
         if let Some(Approved {
+            tab,
             connection,
             statement,
             token,
@@ -295,7 +322,7 @@ pub fn Workspace() -> impl IntoView {
             state.approved.set(None);
             state.notice.set(None);
             let l = limit.get_untracked();
-            leptos::task::spawn_local(run(connection, statement, token, typed_name, out, l));
+            leptos::task::spawn_local(run(tab, connection, statement, token, typed_name, l));
         }
     });
 
@@ -320,10 +347,17 @@ pub fn Workspace() -> impl IntoView {
     };
 
     let cancel = move |_| {
-        if let Some(rid) = result.get_untracked() {
+        if let Some(rid) = output().and_then(|o| o.result.get_untracked()) {
             leptos::task::spawn_local(async move {
                 let _ = ipc::call::<_, ()>("cancel", &serde_json::json!({ "result": rid })).await;
             });
+        }
+    };
+
+    // The caret moved: remember it for when the tab is shown again.
+    let track_caret = move || {
+        if let (Some(id), Some(el)) = (state.current(), area.get_untracked()) {
+            tabs::set_cursor(&id, caret(&el));
         }
     };
 
@@ -358,7 +392,10 @@ pub fn Workspace() -> impl IntoView {
                             {if l.read_only { "Unlock writes" } else { "Lock writes" }}
                         </button>
                     })}
-                    <button class="btn small" on:click=cancel disabled=move || result.get().is_none()>"Cancel"</button>
+                    <button class="btn small save-query" on:click=move |_| tabs::save_current()
+                        disabled=move || current().is_none() title="Ctrl+S">"Save query"</button>
+                    <button class="btn small" on:click=cancel
+                        disabled=move || output().is_none_or(|o| o.result.get().is_none())>"Cancel"</button>
                     <button class="btn small primary" on:click=move |_| run_current()
                         disabled=move || live().is_none() title="Ctrl+Enter">"Run"</button>
                 </div>
@@ -374,6 +411,7 @@ pub fn Workspace() -> impl IntoView {
                         </span>
                     </div>
                 </Show>
+                <TabStrip />
             </div>
             <div class="editor">
                 <pre aria-hidden="true">{move || highlighted(dialect(), &text())}</pre>
@@ -383,17 +421,110 @@ pub fn Workspace() -> impl IntoView {
                     aria-label="Statement editor"
                     placeholder="SELECT * FROM …"
                     prop:value=text
-                    on:input=move |ev| set_text(event_target_value(&ev))
+                    on:input=move |ev| {
+                        if let Some(id) = state.current() {
+                            tabs::set_text(&id, event_target_value(&ev));
+                        }
+                        track_caret();
+                    }
+                    on:keyup=move |_| track_caret()
+                    on:click=move |_| track_caret()
+                    on:blur=move |_| if let Some(id) = state.current() { tabs::keep(&id) }
                     on:keydown=move |ev: web_sys::KeyboardEvent| {
-                        if ev.key() == "Enter" && (ev.ctrl_key() || ev.meta_key()) {
+                        let ctrl = ev.ctrl_key() || ev.meta_key();
+                        if ctrl && ev.key() == "Enter" {
                             ev.prevent_default();
                             run_current();
+                        } else if ctrl && ev.key().eq_ignore_ascii_case("s") {
+                            ev.prevent_default();
+                            tabs::save_current();
                         }
                     }
                 ></textarea>
             </div>
-            <Results result=result on_saved=rerun />
+            <div class="panes">
+                // Every tab keeps its result, and its unsaved grid edits, while another is shown.
+                <For
+                    each=move || state.tabs.get()
+                    key=|t| t.id.clone()
+                    children=move |t| {
+                        let id = t.id.clone();
+                        let shown = id.clone();
+                        let out = state.outputs.with_untracked(|m| m.get(&id).copied()).unwrap_or_else(crate::state::Output::new);
+                        // Saved grid edits: run the statement again to show the rows as they are now.
+                        let rerun = Callback::new(move |()| {
+                            if let Some((_, statement)) = out.statement.get_untracked() {
+                                start(id.clone(), statement, limit.get_untracked());
+                            }
+                        });
+                        view! {
+                            <div class="pane" hidden=move || current().as_ref() != Some(&shown)>
+                                <Results result=out.result pending=out.pending on_saved=rerun />
+                            </div>
+                        }
+                    }
+                />
+            </div>
         </main>
+    }
+}
+
+/// The tabs of the active connection.
+#[component]
+fn TabStrip() -> impl IntoView {
+    let state = ui();
+    let tabs_here = move || {
+        let active = state.active.get();
+        state.tabs.with(|t| {
+            t.iter()
+                .filter(|t| Some(&t.connection) == active.as_ref())
+                .map(|t| t.id.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    view! {
+        <div class="tab-strip" role="tablist" aria-label="Editor tabs">
+            <For
+                each=tabs_here
+                key=|id| id.clone()
+                children=move |id| {
+                    let (on, show, close) = (id.clone(), id.clone(), id.clone());
+                    let title = {
+                        let id = id.clone();
+                        move || state.tabs.with(|t| t.iter().find(|t| t.id == id).map(|t| t.title.clone())).unwrap_or_default()
+                    };
+                    // A tab showing a saved query is marked once its text differs from what was saved.
+                    let changed = {
+                        let id = id.clone();
+                        move || {
+                            let q = state.tabs.with(|t| t.iter().find(|t| t.id == id).and_then(|t| t.saved_query.clone()));
+                            q.is_some_and(|q| {
+                                let text = state.tab_text.with(|m| m.get(&id).cloned());
+                                state.saved_text.with(|m| m.get(&q).is_some_and(|saved| Some(saved) != text.as_ref()))
+                            })
+                        }
+                    };
+                    let label = title.clone();
+                    let hover = title.clone();
+                    view! {
+                        <div class="etab" class:on=move || state.current().as_ref() == Some(&on)>
+                            <button class="etab-title" role="tab"
+                                aria-selected=move || (state.current().as_ref() == Some(&id)).to_string()
+                                title=hover
+                                on:click=move |_| tabs::show(show.clone())>
+                                {title}
+                                <Show when=changed.clone()>
+                                    <span class="changed-dot" title="Changed since it was saved" aria-label="changed">"●"</span>
+                                </Show>
+                            </button>
+                            <button class="etab-close" aria-label=move || format!("Close {}", label())
+                                on:click=move |_| tabs::request_close(close.clone())>"×"</button>
+                        </div>
+                    }
+                }
+            />
+            <button class="etab-new" aria-label="New tab" title="New tab" on:click=move |_| tabs::new_tab()>"+"</button>
+        </div>
     }
 }
 

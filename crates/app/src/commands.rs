@@ -12,9 +12,10 @@ use treasury_core::schema::{ChildPage, ChildQuery, ObjectDetails, ObjectPath};
 use treasury_core::{Error, Result};
 use treasury_ipc::{
     AppFacts, ConnectionView, EditInfo, ExportFormat, ExportView, ImportItem, ImportPreview,
-    LiveView, Prepared, RowEdits, SecretInput, UpdateView, WindowView,
+    LiveView, NAME_LIMIT, Prepared, RowEdits, SavedQueryView, SecretInput, TabView, UpdateView,
+    WindowView, folder_path,
 };
-use treasury_store::HistoryEntry;
+use treasury_store::{HistoryEntry, SavedQuery, TabState};
 
 #[tauri::command]
 pub fn app_facts(state: State<'_, AppState>) -> AppFacts {
@@ -74,6 +75,7 @@ pub async fn delete_connection(state: State<'_, AppState>, id: ConnectionId) -> 
     let rt = &state.runtime;
     rt.disconnect(&id).await;
     rt.secrets_of(&id).clear()?;
+    rt.store().close_tabs_of(&id)?;
     rt.store()
         .delete_connection(&id)
         .map_err(|e| Error::internal(e.to_string()))
@@ -401,6 +403,187 @@ pub fn history(
         None => store.history(id.as_ref(), None, 200),
     }
     .map_err(|e| Error::internal(e.to_string()))
+}
+
+/// The most text a tab or saved query keeps: far more than any script typed or pasted, and a
+/// bound on what is sealed and written on every pause in typing.
+const TEXT_LIMIT: usize = 16 * 1024 * 1024;
+
+fn check_text(text: &str) -> Result<()> {
+    if text.len() > TEXT_LIMIT {
+        return Err(Error::config(
+            None,
+            "This text is over 16 MB, too large to keep in a tab or a saved query.",
+        ));
+    }
+    Ok(())
+}
+
+/// `name` trimmed, or an error saying what is wrong with it.
+fn checked_name(name: &str, what: &str) -> Result<String> {
+    let name = name.trim();
+    if name.chars().count() > NAME_LIMIT {
+        return Err(Error::config(
+            None,
+            format!("Keep the {what} under {NAME_LIMIT} characters."),
+        ));
+    }
+    Ok(name.to_owned())
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+fn save_tab_state(state: &AppState, tab: TabView, position: u32) -> Result<()> {
+    check_text(&tab.text)?;
+    let title = checked_name(&tab.title, "tab title")?;
+    state.runtime.store().save_tab(&TabState {
+        id: tab.id,
+        position: i64::from(position),
+        connection: Some(tab.connection),
+        title,
+        text: tab.text,
+        cursor: i64::from(tab.cursor),
+        saved_query: tab.saved_query,
+    })?;
+    Ok(())
+}
+
+/// The open tabs, in order, with their positions. Tabs whose text was sealed under a key this
+/// session does not have are left out (see the store).
+#[tauri::command]
+pub fn tabs(state: State<'_, AppState>) -> Result<Vec<(TabView, u32)>> {
+    Ok(state
+        .runtime
+        .store()
+        .tabs()?
+        .into_iter()
+        .filter_map(|t| {
+            let position = u32::try_from(t.position).unwrap_or(u32::MAX);
+            let tab = TabView {
+                id: t.id,
+                connection: t.connection?,
+                title: t.title,
+                text: t.text,
+                cursor: u32::try_from(t.cursor).unwrap_or(0),
+                saved_query: t.saved_query,
+            };
+            Some((tab, position))
+        })
+        .collect())
+}
+
+/// Opens a tab at `position` and returns it with its new identifier.
+#[tauri::command]
+pub fn open_tab(
+    state: State<'_, AppState>,
+    connection: ConnectionId,
+    title: String,
+    text: String,
+    saved_query: Option<String>,
+    position: u32,
+) -> Result<TabView> {
+    let tab = TabView {
+        id: ConnectionId::random()?.0,
+        connection,
+        title,
+        text,
+        cursor: 0,
+        saved_query,
+    };
+    save_tab_state(&state, tab.clone(), position)?;
+    Ok(tab)
+}
+
+/// Keeps a tab's text, title, cursor and place in the strip.
+#[tauri::command]
+pub fn save_tab(state: State<'_, AppState>, tab: TabView, position: u32) -> Result<()> {
+    save_tab_state(&state, tab, position)
+}
+
+#[tauri::command]
+pub fn close_tab(state: State<'_, AppState>, id: String) -> Result<()> {
+    Ok(state.runtime.store().close_tab(&id)?)
+}
+
+/// Saved queries, by folder and name.
+#[tauri::command]
+pub fn saved_queries(state: State<'_, AppState>) -> Result<Vec<SavedQueryView>> {
+    Ok(state
+        .runtime
+        .store()
+        .saved_queries()?
+        .into_iter()
+        .map(|q| SavedQueryView {
+            id: q.id,
+            folder: q.folder,
+            name: q.name,
+            connection: q.connection,
+        })
+        .collect())
+}
+
+fn gone() -> Error {
+    Error::config(None, "This saved query no longer exists.")
+}
+
+#[tauri::command]
+pub fn saved_query_text(state: State<'_, AppState>, id: String) -> Result<String> {
+    state
+        .runtime
+        .store()
+        .saved_query_text(&id)?
+        .ok_or_else(gone)
+}
+
+/// Saves a query: a new one when `id` is `None`. Without `text`, the saved text stays, so a
+/// rename or a move to another folder changes nothing else.
+#[tauri::command]
+pub fn save_query(
+    state: State<'_, AppState>,
+    id: Option<String>,
+    name: String,
+    folder: String,
+    connection: Option<ConnectionId>,
+    text: Option<String>,
+) -> Result<SavedQueryView> {
+    let name = checked_name(&name, "name")?;
+    if name.is_empty() {
+        return Err(Error::config(None, "Give the query a name."));
+    }
+    let folder = checked_name(&folder_path(&folder), "folder")?;
+    let store = state.runtime.store();
+    let id = match id {
+        Some(id) => id,
+        None => ConnectionId::random()?.0,
+    };
+    let text = match text {
+        Some(t) => t,
+        None => store.saved_query_text(&id)?.ok_or_else(gone)?,
+    };
+    check_text(&text)?;
+    let query = SavedQuery {
+        id,
+        folder,
+        name,
+        connection,
+        updated_at: now_ms(),
+    };
+    store.save_query(&query, &text)?;
+    Ok(SavedQueryView {
+        id: query.id,
+        folder: query.folder,
+        name: query.name,
+        connection: query.connection,
+    })
+}
+
+#[tauri::command]
+pub fn delete_saved_query(state: State<'_, AppState>, id: String) -> Result<()> {
+    Ok(state.runtime.store().delete_saved_query(&id)?)
 }
 
 #[tauri::command]

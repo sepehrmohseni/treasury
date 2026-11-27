@@ -43,6 +43,7 @@ pub fn App() -> impl IntoView {
         }
     });
     state.reload_connections();
+    crate::tabs::load();
     ipc::listen("host-key", move |event| {
         let payload = js_sys::Reflect::get(&event, &"payload".into()).unwrap_or(event);
         if let Ok(q) = serde_wasm_bindgen::from_value::<HostKeyQuestion>(payload) {
@@ -104,7 +105,7 @@ fn StatusBar() -> impl IntoView {
                 }
             })}
             {move || state.facts.get().filter(|f| f.secrets_in_memory).map(|_| view! {
-                <span title="No system keychain was found">"Passwords are kept only until Treasury quits"</span>
+                <span title="No system keychain was found">"Passwords, history and tabs are kept only until Treasury quits"</span>
             })}
             <span>{move || state.facts.get().map(|f| format!("Treasury {}", f.version)).unwrap_or_default()}</span>
         </footer>

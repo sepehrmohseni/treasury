@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use treasury_core::analyze::StatementClass;
-use treasury_core::config::{ConnectionConfig, Engine, SecretSlot};
+use treasury_core::config::{ConnectionConfig, ConnectionId, Engine, SecretSlot};
 use treasury_core::driver::{Capabilities, ServerInfo};
 use treasury_core::format::Cell;
 
@@ -211,4 +211,77 @@ pub struct UpdateView {
     pub version: String,
     /// What changed, as the release notes say.
     pub notes: Option<String>,
+}
+
+/// An editor tab. Its text is kept as it is typed, so it survives restarts and crashes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabView {
+    /// Identifier.
+    pub id: String,
+    /// The connection whose statements it holds.
+    pub connection: ConnectionId,
+    /// What the tab strip shows.
+    pub title: String,
+    /// The editor text, saved as a query or not.
+    pub text: String,
+    /// Where the cursor was, in characters.
+    pub cursor: u32,
+    /// The saved query the tab shows, if any.
+    pub saved_query: Option<String>,
+}
+
+/// A saved query, without its text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedQueryView {
+    /// Identifier.
+    pub id: String,
+    /// Folder, as `/`-separated names; empty for none.
+    pub folder: String,
+    /// Name.
+    pub name: String,
+    /// The connection it was saved from; `None` for queries shown on every connection.
+    pub connection: Option<ConnectionId>,
+}
+
+/// The longest name or folder a saved query may have, in characters.
+pub const NAME_LIMIT: usize = 200;
+
+/// A folder as the user typed it, made canonical: names trimmed, empty names dropped, joined
+/// with `/`. `" reports / / monthly "` becomes `"reports/monthly"`.
+pub fn folder_path(typed: &str) -> String {
+    typed
+        .split('/')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// The title of a new tab: "Query" and the lowest number no tab in `titles` has yet.
+pub fn new_tab_title<'a>(titles: impl IntoIterator<Item = &'a str>) -> String {
+    let used: Vec<u32> = titles
+        .into_iter()
+        .filter_map(|t| t.strip_prefix("Query ")?.parse().ok())
+        .collect();
+    let n = (1..).find(|n| !used.contains(n)).unwrap_or(1);
+    format!("Query {n}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folders_are_canonical() {
+        assert_eq!(folder_path(" reports / / monthly "), "reports/monthly");
+        assert_eq!(folder_path("  "), "");
+        assert_eq!(folder_path("/a/"), "a");
+    }
+
+    #[test]
+    fn new_tabs_take_the_lowest_free_number() {
+        assert_eq!(new_tab_title([]), "Query 1");
+        assert_eq!(new_tab_title(["Query 1", "orders", "Query 3"]), "Query 2");
+        assert_eq!(new_tab_title(["Query 2", "Query x"]), "Query 1");
+    }
 }

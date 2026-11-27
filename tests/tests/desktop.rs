@@ -1,7 +1,8 @@
 //! The desktop app end to end. `tauri-driver` starts the real app, and the test works its window
 //! the way a person would, against PostgreSQL in a container: add a connection from a connection
 //! string, run statements, read the grid, edit rows in place after reading the statements the
-//! edits become, and confirm a DELETE after seeing its row count.
+//! edits become, confirm a DELETE after seeing its row count, work in several tabs and save one
+//! as a query, and find the tabs again after a restart.
 //!
 //! It runs through `cargo xtask ci desktop`, which builds the app, starts a display when there is
 //! none and sets `TREASURY_APP` to the binary.
@@ -112,21 +113,21 @@ mod desktop {
         s.wait_text(".statusbar", "PostgreSQL", 60);
 
         run(&s, "CREATE TABLE smoke (id int PRIMARY KEY, name text)");
-        s.wait_text(".grid .message", "Done", 30);
+        s.wait_text(&shown(".grid .message"), "Done", 30);
         run(
             &s,
             "INSERT INTO smoke VALUES (1, 'one'), (2, 'two'), (3, NULL)",
         );
-        s.wait_text(".grid .message", "3 rows changed", 30);
+        s.wait_text(&shown(".grid .message"), "3 rows changed", 30);
 
         run(&s, "SELECT id, name FROM smoke ORDER BY id");
-        let grid = s.wait_text(".grid table", "two", 30);
+        let grid = s.wait_text(&shown(".grid table"), "two", 30);
         assert!(grid.contains("one") && grid.contains("NULL"), "{grid}");
-        s.wait_text(".result-foot", "3 rows", 10);
+        s.wait_text(&shown(".result-foot"), "3 rows", 10);
         shot("3-grid");
 
         // Editing in place: change a cell, mark a row for deletion, read the statements, save.
-        s.wait_text(".result-foot .edit-state", "can be edited", 30);
+        s.wait_text(&shown(".result-foot .edit-state"), "can be edited", 30);
         let two = s.wait(&cell(2, 2), 10);
         s.double_click(&two);
         // The editor opens with its text selected, so typing replaces it. WebDriver's own clear
@@ -138,12 +139,12 @@ mod desktop {
              arguments[0].dispatchEvent(new Event('input', { bubbles: true }))",
         );
         s.keys(&input, &key::ENTER.to_string());
-        s.wait_text(".result-foot .pending", "1 change", 10);
+        s.wait_text(&shown(".result-foot .pending"), "1 change", 10);
         s.click_css(&cell(3, 1));
-        s.click_css(".result-foot .btn.delete-row");
-        s.wait_text(".result-foot .pending", "2 changes", 10);
+        s.click_css(&shown(".result-foot .btn.delete-row"));
+        s.wait_text(&shown(".result-foot .pending"), "2 changes", 10);
         shot("4-edits");
-        s.click_css(".result-foot .btn.primary");
+        s.click_css(&shown(".result-foot .btn.primary"));
         let review = s.wait_text(".dialog .statements", "UPDATE", 30);
         assert!(
             review.contains("'deux'") && review.contains("DELETE FROM"),
@@ -153,8 +154,8 @@ mod desktop {
         s.click_css(".dialog .btn.primary");
         s.wait_text(".statusbar", "Saved. 2 rows changed.", 30);
         // The statement runs again, so the grid shows the rows as they are now.
-        s.wait_text(".grid table", "deux", 30);
-        s.wait_text(".result-foot", "2 rows", 30);
+        s.wait_text(&shown(".grid table"), "deux", 30);
+        s.wait_text(&shown(".result-foot"), "2 rows", 30);
 
         // A DELETE on a shared database shows its row count first.
         run(&s, "DELETE FROM smoke WHERE id = 1");
@@ -162,21 +163,79 @@ mod desktop {
         assert!(dialog.contains("smoke"), "{dialog}");
         shot("6-confirm");
         s.click_css(".dialog .btn.primary");
-        s.wait_text(".grid .message", "1 row changed", 30);
+        s.wait_text(&shown(".grid .message"), "1 row changed", 30);
 
         run(&s, "SELECT id, name FROM smoke");
-        s.wait_text(".result-foot", "1 row", 30);
+        s.wait_text(&shown(".result-foot"), "1 row", 30);
         assert_eq!(s.text(&s.wait(&cell(1, 2), 10)), "deux");
         shot("7-after");
 
-        // The tree: a table double-clicked shows its rows.
+        // The tree: a table double-clicked shows its rows, in a tab of its own.
         s.click(&s.wait_item(".tree .item", "public", 10));
         s.click(&s.wait_item(".tree .item", "Tables", 10));
         let table = s.wait_item(".tree .item", "smoke", 10);
         s.double_click(&table);
+        s.wait_text(".tab-strip .etab.on", "smoke", 10);
         s.wait_text(".editor pre", "SELECT * FROM", 10);
-        s.wait_text(".grid table", "deux", 30);
+        s.wait_text(&shown(".grid table"), "deux", 30);
+        assert_eq!(tab_count(&s), 2);
         shot("8-tree");
+
+        // Tabs: each keeps its text and its result while another is shown.
+        s.click_css(".tab-strip .etab-new");
+        s.wait_text(".tab-strip .etab.on", "Query 2", 10);
+        run(&s, "SELECT 'second tab' AS note");
+        s.wait_text(&shown(".grid table"), "second tab", 30);
+        s.click(&s.wait_item(".tab-strip .etab-title", "Query 1", 10));
+        s.wait_text(".editor pre", "SELECT id, name FROM smoke", 10);
+        assert_eq!(s.text(&s.wait(&cell(1, 2), 10)), "deux");
+
+        // A tab saved as a query, in a folder, takes the query's name.
+        s.click(&s.wait_item(".tab-strip .etab-title", "Query 2", 10));
+        s.wait_text(".editor pre", "second tab", 10);
+        s.click_css(".toolbar .save-query");
+        let name = s.wait("#sq-name", 10);
+        s.keys(&name, "Second tab");
+        s.keys(&s.wait("#sq-folder", 10), "checks / daily");
+        shot("9-save-query");
+        s.click_css(".dialog button[type=submit]");
+        s.wait_text(".statusbar", "Saved \"Second tab\".", 10);
+        s.wait_text(".tab-strip .etab.on", "Second tab", 10);
+        s.click_css(".side-views .view-queries");
+        let list = s.wait_text(".list.queries", "checks/daily", 10);
+        assert!(list.contains("Second tab"), "{list}");
+        shot("10-tabs-and-queries");
+
+        // Changing the text marks the tab until Ctrl+S saves the query again.
+        let editor = s.wait(".editor textarea", 10);
+        s.keys(&editor, " ");
+        s.wait(".tab-strip .etab.on .changed-dot", 10);
+        s.keys(&editor, &format!("{}s{}", key::CONTROL, key::NULL));
+        s.wait_script(
+            "return !document.querySelector('.tab-strip .etab.on .changed-dot')",
+            10,
+        );
+
+        // A tab whose text is saved closes without asking, and the query opens it again.
+        s.click_css(".tab-strip .etab.on .etab-close");
+        s.wait_script(
+            "return document.querySelectorAll('.tab-strip .etab').length === 2",
+            10,
+        );
+        s.click(&s.wait_item(".list.queries .item", "Second tab", 10));
+        s.wait_text(".tab-strip .etab.on", "Second tab", 10);
+        s.wait_text(".editor pre", "second tab", 10);
+
+        // A tab with text saved nowhere else asks first.
+        s.click_css(".tab-strip .etab-new");
+        s.wait_text(".tab-strip .etab.on", "Query 2", 10);
+        s.keys(&s.wait(".editor textarea", 10), "SELECT 'draft'");
+        s.click_css(".tab-strip .etab.on .etab-close");
+        s.wait_text(".dialog", "not saved as a query", 10);
+        s.click_css(".dialog footer .btn:first-child");
+        assert!(s.find(".dialog").is_none());
+        assert_eq!(tab_count(&s), 4);
+        s.click_css(".side-views .view-connections");
 
         // A production connection opens read-only, refuses writes until they are unlocked, and
         // then wants its name typed for a DELETE without WHERE.
@@ -199,10 +258,10 @@ mod desktop {
         s.click_css(".dialog button[type=submit]");
         s.wait_text(".toolbar .title", "smoke-prod", 30);
         s.wait(".toolbar .badge.ro", 30);
-        shot("9-production");
+        shot("11-production");
         run(&s, "DELETE FROM smoke");
         s.wait_text(".dialog", "Unlock writes to run it", 30);
-        shot("10-refused");
+        shot("12-refused");
         s.click_css(".dialog .btn.primary");
         s.wait_text(".statusbar", "Writes unlocked for 15 minutes", 30);
         run(&s, "DELETE FROM smoke");
@@ -213,9 +272,9 @@ mod desktop {
             "return document.querySelector('.dialog .btn.primary').disabled === false",
             10,
         );
-        shot("11-type-the-name");
+        shot("13-type-the-name");
         s.click_css(".dialog .btn.primary");
-        s.wait_text(".grid .message", "1 row changed", 30);
+        s.wait_text(&shown(".grid .message"), "1 row changed", 30);
 
         // Tips can be put away; Settings switches the theme and brings the walkthrough back.
         s.click_css(".hint .no-tips");
@@ -238,18 +297,36 @@ mod desktop {
              !== 'rgb(255, 255, 255)'",
             10,
         );
-        s.wait_text(".result-tabs", "1 row changed", 10);
-        shot("12-dark");
+        s.wait_text(&shown(".result-tabs"), "1 row changed", 10);
+        shot("14-dark");
         s.click_css(".brand .settings");
         s.wait("#st-theme", 10);
-        shot("13-settings");
+        shot("15-settings");
         s.click_css(".dialog .walkthrough");
         s.wait_text(".tour", "Your first five minutes", 10);
 
-        // The connection outlives the window.
+        // After a restart: the password came back from the keychain, and the tabs with their
+        // text, the saved query and the draft among them.
+        drop(s);
+        assert!(saved_connection(&data), "the connection was not saved");
+        let s = driver.session(&app);
+        s.wait_text(".home h1", "Connect to a database", 60);
+        assert!(
+            !s.page_text().contains("kept only until Treasury quits"),
+            "the app found no keychain"
+        );
+        s.click(&s.wait_item(".list > .item", "smoke", 30));
+        s.wait_text(".statusbar", "PostgreSQL", 60);
+        let strip = s.wait_text(".tab-strip", "Second tab", 30);
+        for title in ["Query 1", "smoke", "Query 2"] {
+            assert!(strip.contains(title), "{strip}");
+        }
+        s.click(&s.wait_item(".tab-strip .etab-title", "Query 2", 10));
+        s.wait_text(".editor pre", "SELECT 'draft'", 10);
+        run(&s, "SELECT count(*) AS n FROM smoke");
+        s.wait_text(&shown(".result-foot"), "1 row", 30);
         drop(s);
         drop(driver);
-        assert!(saved_connection(&data), "the connection was not saved");
     }
 
     /// Serves an update feed announcing version 99.0.0 on a local port, and returns its URL.
@@ -288,14 +365,26 @@ mod desktop {
         url
     }
 
-    /// The grid cell at `row` (from 1) and `column` (from 1, after the row number). The first
-    /// body row is the spacer above the rows in view.
+    /// `css` inside the result pane of the tab shown; the other tabs keep theirs, hidden.
+    fn shown(css: &str) -> String {
+        format!(".pane:not([hidden]) {css}")
+    }
+
+    /// The grid cell at `row` (from 1) and `column` (from 1, after the row number) of the tab
+    /// shown. The first body row is the spacer above the rows in view.
     fn cell(row: usize, column: usize) -> String {
-        format!(
+        shown(&format!(
             ".grid tbody tr:nth-child({}) td:nth-child({})",
             row + 1,
             column + 1
-        )
+        ))
+    }
+
+    /// How many tabs the strip shows.
+    fn tab_count(s: &Session) -> u64 {
+        s.script("return document.querySelectorAll('.tab-strip .etab').length")
+            .as_u64()
+            .unwrap()
     }
 
     /// Whether the app's database under `data` holds a connection.

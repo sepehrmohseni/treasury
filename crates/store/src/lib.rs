@@ -639,6 +639,13 @@ impl Store {
         Ok(())
     }
 
+    /// Forgets every tab of a connection, readable or not, as when the connection is deleted.
+    pub fn close_tabs_of(&self, connection: &ConnectionId) -> Result<()> {
+        self.lock()
+            .execute("DELETE FROM tabs WHERE connection_id = ?1", [&connection.0])?;
+        Ok(())
+    }
+
     // Overview snapshots.
 
     /// Stores overview metrics and keeps the newest `keep` snapshots of the connection.

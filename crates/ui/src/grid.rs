@@ -76,6 +76,8 @@ fn focus_cell_editor() {
 #[component]
 pub fn Results(
     result: RwSignal<Option<u64>>,
+    /// Set to how many grid edits are not saved yet.
+    pending: RwSignal<usize>,
     /// Called after edits were saved, to read the rows again.
     #[prop(into)]
     on_saved: Callback<()>,
@@ -91,7 +93,9 @@ pub fn Results(
     // Editing.
     let info = RwSignal::new(None::<EditInfo>);
     let asked = RwSignal::new(None::<(u64, usize)>);
+    let unsaved = pending;
     let pending = RwSignal::new(RowEdits::default());
+    Effect::new(move |_| unsaved.set(pending.with(change_count)));
     let selected = RwSignal::new(None::<(u64, usize)>);
     let editing = RwSignal::new(None::<(u64, usize)>);
     let draft = RwSignal::new(String::new());

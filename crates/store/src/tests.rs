@@ -269,6 +269,16 @@ fn tabs_round_trip_and_close() {
     assert_eq!(s.tabs().unwrap(), vec![t2]);
     s.close_tab("t1").unwrap();
     assert!(s.tabs().unwrap().is_empty());
+    // Deleting a connection takes its tabs.
+    s.save_tab(&t).unwrap();
+    let other = TabState {
+        id: "t2".into(),
+        connection: Some(ConnectionId("d".into())),
+        ..t.clone()
+    };
+    s.save_tab(&other).unwrap();
+    s.close_tabs_of(&ConnectionId("c".into())).unwrap();
+    assert_eq!(s.tabs().unwrap(), vec![other]);
 }
 
 #[test]

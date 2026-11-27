@@ -11,6 +11,7 @@ mod home;
 mod ipc;
 mod sidebar;
 mod state;
+mod tabs;
 
 fn main() {
     console_error_panic_hook::set_once();

@@ -1,11 +1,12 @@
 //! Saved connections and, under the open one, its objects.
 
 use crate::ipc;
-use crate::state::{Dialog, ui};
+use crate::state::{Dialog, SideView, ui};
+use crate::tabs;
 use leptos::prelude::*;
 use treasury_core::config::{ConnectionConfig, ConnectionId, Engine, Environment};
 use treasury_core::schema::{ChildPage, ChildQuery, ObjectNode, ObjectPath};
-use treasury_ipc::{ImportPreview, LiveView};
+use treasury_ipc::{ImportPreview, LiveView, SavedQueryView};
 
 fn env_class(e: Environment) -> &'static str {
     match e {
@@ -93,7 +94,18 @@ pub fn Sidebar() -> impl IntoView {
                 <button class="btn small primary" on:click=move |_| add_connection()>"Add"</button>
                 <button class="btn small" on:click=move |_| import_connections()>"Import"</button>
             </div>
-            <div class="list">
+            <div class="side-views" role="tablist" aria-label="Sidebar">
+                <button role="tab" class="view-connections" class:on=move || state.side_view.get() == SideView::Connections
+                    aria-selected=move || (state.side_view.get() == SideView::Connections).to_string()
+                    on:click=move |_| state.side_view.set(SideView::Connections)>"Connections"</button>
+                <button role="tab" class="view-queries" class:on=move || state.side_view.get() == SideView::Queries
+                    aria-selected=move || (state.side_view.get() == SideView::Queries).to_string()
+                    on:click=move |_| state.side_view.set(SideView::Queries)>"Queries"</button>
+            </div>
+            <Show when=move || state.side_view.get() == SideView::Queries>
+                <SavedQueries />
+            </Show>
+            <div class="list" hidden=move || state.side_view.get() != SideView::Connections>
                 <div class="side-section">"Connections"</div>
                 <For
                     each=move || state.connections.get()
@@ -199,7 +211,7 @@ fn TreeNode(connection: ConnectionId, node: ObjectNode, depth: usize) -> impl In
             .active_config()
             .and_then(|c| crate::editor::browse_statement(&c, &browse))
         {
-            state.open_rows.set(Some(statement));
+            state.open_rows.set(Some((browse.name.clone(), statement)));
         }
     };
     view! {
@@ -222,5 +234,57 @@ fn TreeNode(connection: ConnectionId, node: ObjectNode, depth: usize) -> impl In
                 move || view! { <TreeLevel connection=connection.clone() path=path.clone() depth=depth + 1 /> }.into_any()
             }
         </Show>
+    }
+}
+
+/// Saved queries of the active connection and those shown on every connection, by folder.
+#[component]
+fn SavedQueries() -> impl IntoView {
+    let state = ui();
+    let groups = move || {
+        let active = state.active.get();
+        let mut groups: Vec<(String, Vec<SavedQueryView>)> = Vec::new();
+        state.queries.with(|list| {
+            for q in list
+                .iter()
+                .filter(|q| q.connection.is_none() || q.connection == active)
+            {
+                match groups.last_mut() {
+                    Some((folder, items)) if *folder == q.folder => items.push(q.clone()),
+                    _ => groups.push((q.folder.clone(), vec![q.clone()])),
+                }
+            }
+        });
+        groups
+    };
+    view! {
+        <div class="list queries">
+            {move || {
+                if state.active.get().is_none() {
+                    return view! { <p class="empty">"Open a connection to see its saved queries."</p> }.into_any();
+                }
+                let groups = groups();
+                if groups.is_empty() {
+                    return view! {
+                        <p class="empty">"No saved queries. Ctrl+S in the editor saves the tab as one."</p>
+                    }.into_any();
+                }
+                groups.into_iter().map(|(folder, items)| view! {
+                    {(!folder.is_empty()).then(|| view! { <div class="side-section folder">{folder.clone()}</div> })}
+                    {items.into_iter().map(|q| {
+                        let (open, edit) = (q.clone(), q.clone());
+                        let shared = q.connection.is_none();
+                        view! {
+                            <button class="item query" title="Open; double-click to rename, move or delete"
+                                on:click=move |_| tabs::open_saved(open.clone())
+                                on:dblclick=move |_| state.dialog.set(Dialog::SaveQuery { tab: None, query: Some(edit.clone()) })>
+                                <span>{q.name.clone()}</span>
+                                {shared.then(|| view! { <span class="detail">"every connection"</span> })}
+                            </button>
+                        }
+                    }).collect_view()}
+                }).collect_view().into_any()
+            }}
+        </div>
     }
 }
