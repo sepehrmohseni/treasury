@@ -3,6 +3,19 @@
 Notable changes to Treasury, grouped as Added, Changed and Fixed. Versions follow Semantic
 Versioning.
 
+## 0.1.4 (2026-11-28)
+
+### Added
+
+- sql: Filter and sort a table's SELECT through the AST
+- ui: Read the navigator again after a statement changes objects
+- ui: Filter and sort a table's rows on the server, and a row panel
+
+### Fixed
+
+- Save the update check and sidebar width settings
+- ui: Make the navigator's Refresh read the tree again
+
 ## 0.1.3 (2026-11-27)
 
 ### Added
