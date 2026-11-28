@@ -11,6 +11,7 @@ pub mod format;
 mod functions;
 pub mod highlight;
 mod limit;
+pub mod narrow;
 pub mod refs;
 pub mod render;
 pub mod split;
