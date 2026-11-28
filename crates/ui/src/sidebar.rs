@@ -185,7 +185,7 @@ fn SideResize() -> impl IntoView {
         if dragging.get_untracked() {
             dragging.set(false);
             crate::home::set_setting(
-                "side_width",
+                treasury_ipc::Setting::SideWidth,
                 serde_json::Value::from(state.side_width.get_untracked()),
             );
         }
@@ -197,7 +197,7 @@ fn SideResize() -> impl IntoView {
             on:mousedown=move |ev| { ev.prevent_default(); dragging.set(true); }
             on:dblclick=move |_| {
                 state.side_width.set(crate::state::DEFAULT_SIDE_WIDTH);
-                crate::home::set_setting("side_width", serde_json::Value::from(crate::state::DEFAULT_SIDE_WIDTH));
+                crate::home::set_setting(treasury_ipc::Setting::SideWidth, serde_json::Value::from(crate::state::DEFAULT_SIDE_WIDTH));
             }></div>
     }
 }

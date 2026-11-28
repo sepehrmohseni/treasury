@@ -5,6 +5,7 @@ use crate::ipc;
 use crate::sidebar::{add_connection, import_connections};
 use crate::state::ui;
 use leptos::prelude::*;
+use treasury_ipc::Setting;
 
 /// The walkthrough steps: short, in the order a first session goes.
 const STEPS: &[&str] = &[
@@ -15,14 +16,27 @@ const STEPS: &[&str] = &[
     "Export a result from the bar under the grid, or double-click a cell of a one-table result to edit it.",
 ];
 
-pub fn set_setting(key: &'static str, value: serde_json::Value) {
+/// Saves setting `key`; if that fails, the status bar says so.
+pub fn set_setting(key: Setting, value: serde_json::Value) {
     leptos::task::spawn_local(async move {
-        let _ = ipc::call::<_, ()>(
+        if let Err(e) = ipc::call::<_, ()>(
             "set_setting",
             &serde_json::json!({ "key": key, "value": value }),
         )
-        .await;
+        .await
+        {
+            ui().notice
+                .set(Some(format!("Treasury could not save the setting: {e}")));
+        }
     });
+}
+
+/// Setting `key` as saved, or `None` when it was never saved or cannot be read.
+pub async fn setting(key: Setting) -> Option<serde_json::Value> {
+    ipc::call::<_, Option<serde_json::Value>>("setting", &serde_json::json!({ "key": key }))
+        .await
+        .ok()
+        .flatten()
 }
 
 #[component]
@@ -48,7 +62,7 @@ pub fn Home() -> impl IntoView {
                         <ol>{STEPS.iter().map(|s| view! { <li>{*s}</li> }).collect_view()}</ol>
                         <button class="btn small hide-tour" on:click=move |_| {
                             state.tutorial_done.set(true);
-                            set_setting("tutorial_done", serde_json::Value::Bool(true));
+                            set_setting(Setting::TutorialDone, serde_json::Value::Bool(true));
                         }>"Got it, hide this"</button>
                     </section>
                 </Show>

@@ -98,12 +98,8 @@ pub fn HistoryPanel() -> impl IntoView {
     let requests = StoredValue::new(0u64);
 
     leptos::task::spawn_local(async move {
-        let v = ipc::call::<_, Option<serde_json::Value>>(
-            "setting",
-            &serde_json::json!({ "key": "history" }),
-        )
-        .await;
-        off_in_settings.set(matches!(v, Ok(Some(serde_json::Value::Bool(false)))));
+        let v = crate::home::setting(treasury_ipc::Setting::History).await;
+        off_in_settings.set(v == Some(serde_json::Value::Bool(false)));
     });
 
     Effect::new(move |_| {

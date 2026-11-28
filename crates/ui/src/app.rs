@@ -16,26 +16,26 @@ pub fn App() -> impl IntoView {
         if let Ok(f) = ipc::call0::<AppFacts>("app_facts").await {
             state.facts.set(Some(f));
         }
-        let get = |key: &'static str| async move {
-            ipc::call::<_, Option<serde_json::Value>>("setting", &serde_json::json!({ "key": key }))
-                .await
-                .ok()
-                .flatten()
-        };
-        if let Some(v) = get("hints").await.and_then(|v| v.as_bool()) {
+        if let Some(v) = crate::home::setting(treasury_ipc::Setting::Hints)
+            .await
+            .and_then(|v| v.as_bool())
+        {
             state.hints.set(v);
         }
-        if let Some(v) = get("tutorial_done").await.and_then(|v| v.as_bool()) {
+        if let Some(v) = crate::home::setting(treasury_ipc::Setting::TutorialDone)
+            .await
+            .and_then(|v| v.as_bool())
+        {
             state.tutorial_done.set(v);
         }
-        if let Some(v) = get("side_width")
+        if let Some(v) = crate::home::setting(treasury_ipc::Setting::SideWidth)
             .await
             .and_then(|v| v.as_u64())
             .and_then(|v| u32::try_from(v.clamp(200, 640)).ok())
         {
             state.side_width.set(v);
         }
-        if let Some(v) = get("theme")
+        if let Some(v) = crate::home::setting(treasury_ipc::Setting::Theme)
             .await
             .and_then(|v| v.as_str().map(str::to_owned))
         {
@@ -90,14 +90,9 @@ const UPDATE_EVERY: std::time::Duration = std::time::Duration::from_secs(6 * 60 
 /// say) is not worth interrupting anyone for; an update found shows in the status bar.
 async fn background_check() {
     let state = ui();
-    let enabled = ipc::call::<_, Option<serde_json::Value>>(
-        "setting",
-        &serde_json::json!({ "key": "update_check" }),
-    )
-    .await
-    .ok()
-    .flatten()
-    .and_then(|v| v.as_bool())
+    let enabled = crate::home::setting(treasury_ipc::Setting::UpdateCheck)
+        .await
+        .and_then(|v| v.as_bool())
         != Some(false);
     if enabled && let Ok(found) = check_for_update().await {
         state.update.set(found);

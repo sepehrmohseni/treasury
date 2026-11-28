@@ -13,5 +13,8 @@ publish.workspace = true
 treasury-core = { path = "../core", default-features = false }
 serde.workspace = true
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true

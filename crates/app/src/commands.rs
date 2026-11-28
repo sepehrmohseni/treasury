@@ -13,8 +13,8 @@ use treasury_core::{Error, Result};
 use treasury_ipc::{
     AppFacts, CatalogView, ColumnView, ConnectionView, CopyFormat, CopyView, EditInfo,
     ExportFormat, ExportView, HistoryView, ImportItem, ImportPreview, LiveView, NAME_LIMIT,
-    Prepared, RowEdits, RunOutcome, SavedQueryView, SecretInput, TabView, UpdateView, WindowView,
-    folder_path,
+    Prepared, RowEdits, RunOutcome, SavedQueryView, SecretInput, Setting, TabView, UpdateView,
+    WindowView, folder_path,
 };
 use treasury_store::{RunStatus, SavedQuery, TabState};
 
@@ -394,41 +394,26 @@ pub async fn lock_writes(state: State<'_, AppState>, id: ConnectionId) -> Result
     live_view(&state, &id).await
 }
 
-/// Settings the interface may read and change; anything else is refused.
-const SETTINGS: &[&str] = &[
-    "row_limit",
-    "theme",
-    "density",
-    "hints",
-    "tutorial_done",
-    "history",
-];
-
+/// A setting the interface may read; a key that is not a [`Setting`] is refused on the way in.
 #[tauri::command]
-pub fn setting(state: State<'_, AppState>, key: String) -> Result<Option<serde_json::Value>> {
-    if !SETTINGS.contains(&key.as_str()) {
-        return Err(Error::unsupported("Unknown setting."));
-    }
+pub fn setting(state: State<'_, AppState>, key: Setting) -> Result<Option<serde_json::Value>> {
     state
         .runtime
         .store()
-        .setting::<serde_json::Value>(&key)
+        .setting::<serde_json::Value>(key.key())
         .map_err(|e| Error::internal(e.to_string()))
 }
 
 #[tauri::command]
 pub fn set_setting(
     state: State<'_, AppState>,
-    key: String,
+    key: Setting,
     value: serde_json::Value,
 ) -> Result<()> {
-    if !SETTINGS.contains(&key.as_str()) {
-        return Err(Error::unsupported("Unknown setting."));
-    }
     state
         .runtime
         .store()
-        .set_setting(&key, &value)
+        .set_setting(key.key(), &value)
         .map_err(|e| Error::internal(e.to_string()))
 }
 

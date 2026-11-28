@@ -999,7 +999,7 @@ pub fn Workspace() -> impl IntoView {
                             <button class="btn small" on:click=move |_| hint.update(|h| *h = (*h + 1) % HINTS.len())>"Next tip"</button>
                             <button class="btn small no-tips" on:click=move |_| {
                                 state.hints.set(false);
-                                set_setting("hints", serde_json::Value::Bool(false));
+                                set_setting(treasury_ipc::Setting::Hints, serde_json::Value::Bool(false));
                             }>"Don't show tips"</button>
                         </span>
                     </div>

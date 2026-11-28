@@ -274,7 +274,10 @@ fn go(target: Target) {
             Action::ShowHistory => state.side_view.set(SideView::History),
             Action::Theme(t) => {
                 crate::dialogs::apply_theme(t);
-                crate::home::set_setting("theme", serde_json::Value::String(t.to_owned()));
+                crate::home::set_setting(
+                    treasury_ipc::Setting::Theme,
+                    serde_json::Value::String(t.to_owned()),
+                );
             }
         },
     }

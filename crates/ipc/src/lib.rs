@@ -12,6 +12,57 @@ pub use treasury_core::edit::Expiry;
 use treasury_core::format::Cell;
 use treasury_core::schema::{ObjectKind, ObjectPath};
 
+/// A setting the interface reads and changes. A key outside this list cannot be named, so the
+/// app refuses no setting the interface saves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Setting {
+    /// The default row limit.
+    RowLimit,
+    /// System, light or dark.
+    Theme,
+    /// Tips are shown.
+    Hints,
+    /// The first-run walkthrough was finished or skipped.
+    TutorialDone,
+    /// Statements are recorded in the history.
+    History,
+    /// Treasury asks GitHub for a newer release at start and every few hours.
+    UpdateCheck,
+    /// The sidebar's width in pixels.
+    SideWidth,
+    /// The panel beside the grid that shows the selected row is open.
+    RowPanel,
+}
+
+impl Setting {
+    /// Every setting.
+    pub const ALL: [Setting; 8] = [
+        Setting::RowLimit,
+        Setting::Theme,
+        Setting::Hints,
+        Setting::TutorialDone,
+        Setting::History,
+        Setting::UpdateCheck,
+        Setting::SideWidth,
+        Setting::RowPanel,
+    ];
+
+    /// Its key in the local store.
+    pub fn key(self) -> &'static str {
+        match self {
+            Setting::RowLimit => "row_limit",
+            Setting::Theme => "theme",
+            Setting::Hints => "hints",
+            Setting::TutorialDone => "tutorial_done",
+            Setting::History => "history",
+            Setting::UpdateCheck => "update_check",
+            Setting::SideWidth => "side_width",
+            Setting::RowPanel => "row_panel",
+        }
+    }
+}
+
 /// Facts the interface needs at start.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppFacts {
@@ -314,6 +365,21 @@ pub fn new_tab_title<'a>(titles: impl IntoIterator<Item = &'a str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_setting_travels_as_its_store_key() {
+        for s in Setting::ALL {
+            assert_eq!(
+                serde_json::to_value(s).unwrap(),
+                serde_json::Value::from(s.key())
+            );
+            assert_eq!(
+                serde_json::from_value::<Setting>(serde_json::Value::from(s.key())).unwrap(),
+                s
+            );
+        }
+        assert!(serde_json::from_value::<Setting>(serde_json::Value::from("password")).is_err());
+    }
 
     #[test]
     fn folders_are_canonical() {

@@ -1229,25 +1229,28 @@ fn SettingsDialog() -> impl IntoView {
         });
     };
     leptos::task::spawn_local(async move {
-        let get = |key: &'static str| async move {
-            ipc::call::<_, Option<serde_json::Value>>("setting", &serde_json::json!({ "key": key }))
-                .await
-                .ok()
-                .flatten()
-        };
-        if let Some(v) = get("theme")
+        if let Some(v) = crate::home::setting(treasury_ipc::Setting::Theme)
             .await
             .and_then(|v| v.as_str().map(str::to_owned))
         {
             theme.set(v);
         }
-        if let Some(v) = get("row_limit").await.and_then(|v| v.as_u64()) {
+        if let Some(v) = crate::home::setting(treasury_ipc::Setting::RowLimit)
+            .await
+            .and_then(|v| v.as_u64())
+        {
             row_limit.set(v.to_string());
         }
-        if let Some(v) = get("history").await.and_then(|v| v.as_bool()) {
+        if let Some(v) = crate::home::setting(treasury_ipc::Setting::History)
+            .await
+            .and_then(|v| v.as_bool())
+        {
             history.set(v);
         }
-        if let Some(v) = get("update_check").await.and_then(|v| v.as_bool()) {
+        if let Some(v) = crate::home::setting(treasury_ipc::Setting::UpdateCheck)
+            .await
+            .and_then(|v| v.as_bool())
+        {
             update_check.set(v);
         }
     });
@@ -1263,22 +1266,34 @@ fn SettingsDialog() -> impl IntoView {
         };
         let theme = theme.get_untracked();
         apply_theme(&theme);
-        crate::home::set_setting("theme", serde_json::Value::String(theme));
-        crate::home::set_setting("row_limit", serde_json::Value::from(limit));
-        crate::home::set_setting("history", serde_json::Value::Bool(history.get_untracked()));
         crate::home::set_setting(
-            "hints",
+            treasury_ipc::Setting::Theme,
+            serde_json::Value::String(theme),
+        );
+        crate::home::set_setting(
+            treasury_ipc::Setting::RowLimit,
+            serde_json::Value::from(limit),
+        );
+        crate::home::set_setting(
+            treasury_ipc::Setting::History,
+            serde_json::Value::Bool(history.get_untracked()),
+        );
+        crate::home::set_setting(
+            treasury_ipc::Setting::Hints,
             serde_json::Value::Bool(state.hints.get_untracked()),
         );
         crate::home::set_setting(
-            "update_check",
+            treasury_ipc::Setting::UpdateCheck,
             serde_json::Value::Bool(update_check.get_untracked()),
         );
         close();
     };
     let walkthrough = move |_| {
         state.tutorial_done.set(false);
-        crate::home::set_setting("tutorial_done", serde_json::Value::Bool(false));
+        crate::home::set_setting(
+            treasury_ipc::Setting::TutorialDone,
+            serde_json::Value::Bool(false),
+        );
         state.active.set(None);
         close();
     };
@@ -1313,7 +1328,7 @@ fn SettingsDialog() -> impl IntoView {
                     </div>
                     <div class="field">
                         <span></span>
-                        <label><input type="checkbox" prop:checked=move || update_check.get()
+                        <label><input id="st-update" type="checkbox" prop:checked=move || update_check.get()
                             on:change=move |ev| update_check.set(event_target_checked(&ev)) />" Check for a new version at start and every 6 hours"</label>
                     </div>
                     <div class="field">

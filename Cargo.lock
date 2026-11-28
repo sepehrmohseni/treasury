@@ -8766,6 +8766,7 @@ name = "treasury-ipc"
 version = "0.1.3"
 dependencies = [
  "serde",
+ "serde_json",
  "treasury-core",
 ]
 
