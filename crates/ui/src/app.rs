@@ -28,6 +28,12 @@ pub fn App() -> impl IntoView {
         {
             state.tutorial_done.set(v);
         }
+        if let Some(v) = crate::home::setting(treasury_ipc::Setting::RowPanel)
+            .await
+            .and_then(|v| v.as_bool())
+        {
+            state.row_panel.set(v);
+        }
         if let Some(v) = crate::home::setting(treasury_ipc::Setting::SideWidth)
             .await
             .and_then(|v| v.as_u64())

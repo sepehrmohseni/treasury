@@ -228,6 +228,8 @@ pub struct Ui {
     pub pages: RwSignal<HashMap<String, ObjectPage>>,
     /// The sidebar's width in pixels.
     pub side_width: RwSignal<u32>,
+    /// The panel beside the grid that shows the selected row is open.
+    pub row_panel: RwSignal<bool>,
 }
 
 /// A statement the user confirmed in the guardrail dialog.
@@ -281,6 +283,7 @@ impl Ui {
             nav_filter: RwSignal::new(String::new()),
             pages: RwSignal::new(HashMap::new()),
             side_width: RwSignal::new(DEFAULT_SIDE_WIDTH),
+            row_panel: RwSignal::new(false),
         }
     }
 

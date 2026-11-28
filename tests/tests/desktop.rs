@@ -263,6 +263,52 @@ mod desktop {
         s.wait_text(&shown(".result-foot .edit-state"), "can be edited", 30);
         assert_eq!(tab_count(&s), 2);
         shot("8b-table-data");
+        // The filter box reads only the rows that match, from the server.
+        let filter = s.wait(&shown(".filter-input"), 10);
+        s.keys(&filter, "name = 'seven'");
+        s.keys(&filter, &key::ENTER.to_string());
+        s.wait_text(&shown(".result-foot"), "1 row", 30);
+        assert!(!s.text(&s.wait(&shown(".grid table"), 10)).contains("deux"));
+        // Anything but one condition is refused, and the rows stay as they were.
+        s.script_on(
+            &filter,
+            "arguments[0].value = '1 = 1; DROP TABLE smoke'; \
+             arguments[0].dispatchEvent(new Event('input', { bubbles: true }))",
+        );
+        s.click_css(&shown(".filter-apply"));
+        s.wait_text(&shown(".data-error"), "one condition", 10);
+        s.wait_text(&shown(".result-foot"), "1 row", 10);
+        s.click_css(&shown(".filter-clear"));
+        s.wait_text(&shown(".result-foot"), "2 rows", 30);
+        assert!(s.find(&shown(".data-error")).is_none());
+        // A click on a header sorts on the server: smallest first, then largest first.
+        s.click(&s.wait_item(&shown(".grid th .col-sort"), "id", 10));
+        s.wait(&shown(".grid th[aria-sort=ascending]"), 30);
+        s.wait_text(&cell(1, 2), "deux", 30);
+        s.click(&s.wait_item(&shown(".grid th .col-sort"), "id", 10));
+        s.wait(&shown(".grid th[aria-sort=descending]"), 30);
+        s.wait_text(&cell(1, 2), "seven", 30);
+        s.wait_text(&shown(".sort-state"), "Sorted by id ↓", 10);
+        // The row panel shows the selected row one field per line, and stays open.
+        s.click_css(&cell(2, 2));
+        s.click_css(&shown(".result-foot .row-panel-toggle"));
+        let row = s.wait_text(&shown(".row-panel"), "deux", 10);
+        assert!(row.contains("Row 2") && row.contains("name"), "{row}");
+        shot("8c-table-filter");
+        // A table made in a SQL editor shows in the navigator once it exists.
+        s.click(&s.wait_item(".tab-strip .etab-title", "Query 1", 10));
+        run(&s, "CREATE TABLE smoke_later (id int)");
+        s.wait_text(&shown(".grid .message"), "Done", 30);
+        s.wait_item(".tree .item", "smoke_later", 30);
+        run(&s, "DROP TABLE smoke_later");
+        s.wait_text(&shown(".grid .message"), "Done", 30);
+        s.wait_script(
+            "return ![...document.querySelectorAll('.tree .item')].some(e => e.innerText.includes('smoke_later'))",
+            30,
+        );
+        run(&s, "SELECT id, name FROM smoke ORDER BY id");
+        s.wait_text(&shown(".result-foot"), "2 rows", 30);
+        s.click(&s.wait_item(".tab-strip .etab-title", "smoke", 10));
         // Properties again, then back to the SQL editor, which kept its text.
         s.click_css(".object-tabs .props-tab");
         s.wait(".object-props .props-nav", 10);
@@ -686,8 +732,21 @@ mod desktop {
         // Tips can be put away; Settings switches the theme and brings the walkthrough back.
         s.click_css(".hint .no-tips");
         assert!(s.find(".hint").is_none());
+        // The sidebar keeps the width it is dragged to.
+        s.script_on(
+            &s.wait(".side-resize", 10),
+            "arguments[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 300 })); \
+             window.dispatchEvent(new MouseEvent('mousemove', { clientX: 360 })); \
+             window.dispatchEvent(new MouseEvent('mouseup', { clientX: 360 }))",
+        );
+        s.wait_script(
+            "return document.querySelector('.app').style.getPropertyValue('--side') === '360px'",
+            10,
+        );
         s.click_css(".brand .settings");
         let theme = s.wait("#st-theme", 10);
+        // The check for a new version can be turned off, and stays off.
+        s.click_css("#st-update");
         s.script_on(
             &theme,
             "arguments[0].value = 'dark'; \
@@ -746,6 +805,21 @@ mod desktop {
         s.wait_text(".editor pre", "SELECT 'draft'", 10);
         run(&s, "SELECT count(*) AS n FROM smoke");
         s.wait_text(&shown(".result-foot"), "1 row", 30);
+        // Settings came back: the row panel is open, the sidebar as wide as it was left, and
+        // the check for a new version off, so the newer version is not offered at start.
+        s.wait(&shown(".row-panel"), 10);
+        assert_eq!(
+            s.script("return document.querySelector('.app').style.getPropertyValue('--side')"),
+            serde_json::json!("360px")
+        );
+        s.click_css(".brand .settings");
+        s.wait("#st-theme", 10);
+        s.wait_script(
+            "return document.querySelector('#st-update').checked === false",
+            10,
+        );
+        assert!(s.find(".statusbar .update").is_none());
+        s.click_css(".dialog footer .btn:not(.primary)");
 
         // The history kept from before the restart, and clearing it.
         s.click_css(".side-views .view-history");

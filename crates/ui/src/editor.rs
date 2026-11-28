@@ -17,6 +17,7 @@ use treasury_core::exec::ExecutionStatus;
 use treasury_core::schema::{ObjectKind, ObjectNode};
 use treasury_ipc::{LiveView, Prepared};
 use treasury_sql::highlight::{SpanKind, highlight};
+use treasury_sql::narrow::Sort;
 use treasury_sql::{SqlAnalyzer, render};
 use wasm_bindgen::JsCast;
 
@@ -25,11 +26,13 @@ const HINTS: &[&str] = &[
     "Ctrl+Enter runs the statement under the cursor; select text to run just that.",
     "Plain SELECTs get a 1,000-row limit. Untick \"Limit\" in the toolbar to read everything.",
     "Production connections open read-only. \"Unlock writes\" lasts 15 minutes.",
-    "Double-click a connection in the list to edit it.",
+    "Right-click a connection in the navigator to edit it or open a SQL editor on it.",
     "UPDATE and DELETE on shared databases show how many rows they change before they run.",
     "Export streams straight to the file, so results larger than memory export fine.",
     "Double-click a cell of a one-table result to edit it. Nothing is saved until you review the statements.",
-    "Double-click a table in the list on the left to see its rows.",
+    "Double-click a table in the navigator to open it: Properties lists its columns, Data shows its rows.",
+    "On a table's Data page, type a condition such as id > 10 in the filter box, or click a column header to sort.",
+    "F7 shows the selected row beside the grid, one field per line.",
     "Every tab keeps its text as you type, so it is still there after a restart.",
     "Ctrl+S saves the tab as a query; saved queries are under Queries on the left.",
     "History on the left lists what ran on this connection; search it, or click one to open it.",
@@ -155,11 +158,7 @@ pub fn browse_statement(config: &ConnectionConfig, node: &ObjectNode) -> Option<
         // The command name comes first, so the text is written out rather than serialized.
         (Engine::MongoDb, _) => {
             let db = database.or(config.database.as_deref()).unwrap_or("test");
-            format!(
-                "{{\"find\": {}, \"filter\": {{}}, \"$db\": {}}}",
-                serde_json::Value::from(name),
-                serde_json::Value::from(db)
-            )
+            mongo_find(name, db, "{}", &[])
         }
         (Engine::MySql | Engine::MariaDb, Some(d)) => {
             format!("SELECT * FROM {}", render::table(d, database, name))
@@ -176,6 +175,70 @@ pub fn browse_statement(config: &ConnectionConfig, node: &ObjectNode) -> Option<
         (_, Some(d)) => format!("SELECT * FROM {}", render::table(d, schema, name)),
         (_, None) => return None,
     })
+}
+
+/// The find command for collection `name` of database `db`: the documents matching `filter`, a
+/// JSON document, sorted by `order`.
+fn mongo_find(name: &str, db: &str, filter: &str, order: &[Sort]) -> String {
+    // The command name comes first, so the text is written out rather than serialized.
+    let mut text = format!(
+        "{{\"find\": {}, \"filter\": {filter}",
+        serde_json::Value::from(name)
+    );
+    if !order.is_empty() {
+        let keys: Vec<String> = order
+            .iter()
+            .map(|s| {
+                let way = if s.descending { -1 } else { 1 };
+                format!("{}: {way}", serde_json::Value::from(s.column.as_str()))
+            })
+            .collect();
+        text.push_str(&format!(", \"sort\": {{{}}}", keys.join(", ")));
+    }
+    text.push_str(&format!(", \"$db\": {}}}", serde_json::Value::from(db)));
+    text
+}
+
+/// The statement a table's Data page runs: its rows that match `filter`, sorted by `order`.
+/// The filter is a SQL condition, or a JSON query document for MongoDB. `Ok(None)` for objects
+/// without rows; an error says why the filter cannot be used.
+pub fn data_statement(
+    config: &ConnectionConfig,
+    node: &ObjectNode,
+    filter: &str,
+    order: &[Sort],
+) -> Result<Option<String>, String> {
+    let Some(base) = browse_statement(config, node) else {
+        return Ok(None);
+    };
+    let filter = filter.trim();
+    if filter.is_empty() && order.is_empty() {
+        return Ok(Some(base));
+    }
+    match (config.engine, dialect_of(config.engine)) {
+        (Engine::MongoDb, _) => {
+            let filter = if filter.is_empty() { "{}" } else { filter };
+            if !matches!(
+                serde_json::from_str::<serde_json::Value>(filter),
+                Ok(serde_json::Value::Object(_))
+            ) {
+                return Err(
+                    "The filter must be a JSON query document, such as {\"status\": \"open\"}."
+                        .into(),
+                );
+            }
+            let (Some(name), database) = (
+                node.path.0.last().map(|p| p.name.as_str()),
+                node.path.find(ObjectKind::Database),
+            ) else {
+                return Ok(None);
+            };
+            let db = database.or(config.database.as_deref()).unwrap_or("test");
+            Ok(Some(mongo_find(name, db, filter, order)))
+        }
+        (_, Some(d)) => treasury_sql::narrow::narrow(d, &base, filter, order).map(Some),
+        (_, None) => Err("Rows of this object cannot be filtered or sorted.".into()),
+    }
 }
 
 /// Every statement of `text`, in order: SQL by its dialect, Redis by line, and a MongoDB command
@@ -1136,14 +1199,27 @@ pub fn Workspace() -> impl IntoView {
                         let shown = id.clone();
                         let out = state.outputs.with_untracked(|m| m.get(&id).copied()).unwrap_or_else(crate::state::Output::new);
                         // Saved grid edits: run the statement again to show the rows as they are now.
+                        // A table's Data page filters and sorts on the server.
+                        let rows = t.object.as_ref().is_some_and(|o| crate::navigator::has_rows(o.kind));
+                        let sorting = rows.then(|| {
+                            let tab = id.clone();
+                            crate::grid::Sorting {
+                                order: crate::objects::order_of(id.clone()),
+                                on_sort: Callback::new(move |(column, add): (String, bool)| {
+                                    crate::objects::sort_by(&tab, &column, add)
+                                }),
+                            }
+                        });
+                        let filter_tab = id.clone();
                         let rerun = Callback::new(move |rid: u64| {
                             if let Some(statement) = out.statements.with_untracked(|m| m.get(&rid).cloned()) {
                                 begin(id.clone(), statement, limit.get_untracked(), Slot::Instead(rid), None);
                             }
                         });
                         view! {
-                            <div class="pane" hidden=move || current().as_ref() != Some(&shown)>
-                                <Results out=out on_saved=rerun />
+                            <div class="pane" class:with-filter=rows hidden=move || current().as_ref() != Some(&shown)>
+                                {rows.then(|| view! { <crate::objects::DataFilter tab=filter_tab.clone() /> })}
+                                <Results out=out on_saved=rerun sorting=sorting />
                             </div>
                         }
                     }
@@ -1384,6 +1460,62 @@ mod tests {
             &[(Schema, "public"), (Schema, "public")],
         );
         assert!(browse_statement(&c, &n).is_none(), "a schema has no rows");
+    }
+
+    #[test]
+    fn a_data_page_filters_and_sorts_on_the_server() {
+        use ObjectKind::{Collection, Database, Group, Schema, Table};
+        let by = |column: &str, descending: bool| Sort {
+            column: column.to_owned(),
+            descending,
+        };
+        let (c, n) = node(
+            Engine::Postgres,
+            Some("shop"),
+            &[(Schema, "shop"), (Group, "Tables"), (Table, "orders")],
+        );
+        assert_eq!(
+            data_statement(&c, &n, "", &[]).unwrap().unwrap(),
+            browse_statement(&c, &n).unwrap()
+        );
+        assert_eq!(
+            data_statement(&c, &n, "total > 100", &[by("id", true)])
+                .unwrap()
+                .unwrap(),
+            "SELECT * FROM \"shop\".\"orders\"\nWHERE total > 100\nORDER BY \"id\" DESC"
+        );
+        assert!(data_statement(&c, &n, "1 = 1; drop table orders", &[]).is_err());
+
+        let (c, n) = node(
+            Engine::MongoDb,
+            Some("app"),
+            &[(Database, "app"), (Collection, "users")],
+        );
+        assert_eq!(
+            data_statement(
+                &c,
+                &n,
+                r#"{"age": {"$gt": 30}}"#,
+                &[by("name", false), by("age", true)]
+            )
+            .unwrap()
+            .unwrap(),
+            r#"{"find": "users", "filter": {"age": {"$gt": 30}}, "sort": {"name": 1, "age": -1}, "$db": "app"}"#
+        );
+        assert_eq!(
+            data_statement(&c, &n, "", &[by("_id", true)])
+                .unwrap()
+                .unwrap(),
+            r#"{"find": "users", "filter": {}, "sort": {"_id": -1}, "$db": "app"}"#
+        );
+        for bad in [
+            "age > 30",
+            "[1]",
+            r#"{"a": 1} {"b": 2}"#,
+            r#"{"a": 1}, "$db": "admin""#,
+        ] {
+            assert!(data_statement(&c, &n, bad, &[]).is_err(), "{bad}");
+        }
     }
 
     #[test]

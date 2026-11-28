@@ -10,7 +10,7 @@ use treasury_ipc::Setting;
 /// The walkthrough steps: short, in the order a first session goes.
 const STEPS: &[&str] = &[
     "Add a connection, or import the ones you have in another client: DBeaver, Beekeeper Studio, pgAdmin, DataGrip or MongoDB Compass.",
-    "Open it from the list on the left. Production connections open read-only and are marked in red.",
+    "Open it in the navigator on the left and expand it to see its databases, schemas and tables. Production connections open read-only and are marked in red.",
     "Write a statement and press Ctrl+Enter to run the one under the cursor. Plain SELECTs get a 1,000-row limit.",
     "Before an UPDATE or DELETE runs on a shared database, Treasury shows how many rows it changes.",
     "Export a result from the bar under the grid, or double-click a cell of a one-table result to edit it.",

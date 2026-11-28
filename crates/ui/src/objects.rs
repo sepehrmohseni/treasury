@@ -7,8 +7,9 @@ use crate::state::{ObjectPage, ui};
 use crate::tabs;
 use leptos::prelude::*;
 use std::collections::{HashMap, HashSet};
-use treasury_core::config::ConnectionId;
+use treasury_core::config::{ConnectionId, Engine};
 use treasury_core::schema::{ObjectDetails, ObjectKind, ObjectNode};
+use treasury_sql::narrow::{Sort, cycled};
 
 /// What was read about an object editor's object, by tab.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -17,10 +18,22 @@ struct Info {
     ddl: Option<Result<Option<String>, String>>,
 }
 
+/// How an object editor's Data page narrows its rows, by tab.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct DataView {
+    /// The filter the rows were read with.
+    filter: String,
+    /// The columns they are sorted by.
+    order: Vec<Sort>,
+    /// Why the last filter or sort asked for could not be used.
+    error: Option<String>,
+}
+
 thread_local! {
     /// Reference-counted rather than owned, so no component or effect that reads it first can
     /// dispose of it.
     static INFO: ArcRwSignal<HashMap<String, Info>> = ArcRwSignal::new(HashMap::new());
+    static VIEWS: ArcRwSignal<HashMap<String, DataView>> = ArcRwSignal::new(HashMap::new());
     /// Object editor tabs whose rows have been asked for, so showing them again does not
     /// read them again; Refresh does.
     static READ: std::cell::RefCell<HashSet<String>> = std::cell::RefCell::new(HashSet::new());
@@ -28,6 +41,16 @@ thread_local! {
 
 fn info() -> ArcRwSignal<HashMap<String, Info>> {
     INFO.with(Clone::clone)
+}
+
+fn views() -> ArcRwSignal<HashMap<String, DataView>> {
+    VIEWS.with(Clone::clone)
+}
+
+fn view_of(tab: &str) -> DataView {
+    views()
+        .with_untracked(|m| m.get(tab).cloned())
+        .unwrap_or_default()
 }
 
 /// Reads the details and the DDL of tab `tab`'s object.
@@ -54,22 +77,97 @@ fn load(tab: String, connection: ConnectionId, node: ObjectNode) {
     });
 }
 
-/// Reads tab `tab`'s rows, the first time they are shown or again on Refresh.
-fn read_rows(tab: &str, connection: &ConnectionId, node: &ObjectNode, again: bool) {
+/// Reads tab `tab`'s rows that match `filter`, sorted by `order`, on the server. `Err` says why
+/// they were not read: the filter cannot be used, or rows read before have edits not saved yet,
+/// which reading again would lose.
+fn read(
+    tab: &str,
+    connection: &ConnectionId,
+    node: &ObjectNode,
+    filter: &str,
+    order: &[Sort],
+) -> Result<(), String> {
     let state = ui();
-    let first = READ.with(|r| r.borrow_mut().insert(tab.to_owned()));
-    if !first && !again {
-        return;
+    let unsaved = state
+        .outputs
+        .with_untracked(|m| m.get(tab).map(|o| o.pending.get_untracked()))
+        .unwrap_or(0);
+    if unsaved > 0 {
+        let what = if unsaved == 1 {
+            "the change".to_owned()
+        } else {
+            format!("the {unsaved} changes")
+        };
+        return Err(format!(
+            "Save or discard {what} in the grid first; reading the rows again would lose it."
+        ));
     }
     let config = state.connections.with_untracked(|l| {
         l.iter()
             .find(|c| &c.config.id == connection)
             .map(|c| c.config.clone())
     });
-    if let Some(statement) = config.and_then(|c| crate::editor::browse_statement(&c, node)) {
+    let Some(config) = config else {
+        return Ok(());
+    };
+    if let Some(statement) = crate::editor::data_statement(&config, node, filter, order)? {
+        READ.with(|r| r.borrow_mut().insert(tab.to_owned()));
         state.notice.set(None);
         crate::editor::start(tab.to_owned(), statement, true);
     }
+    Ok(())
+}
+
+/// Reads tab `tab`'s rows as its Data page narrows them, the first time they are shown or again
+/// on Refresh.
+fn read_rows(tab: &str, connection: &ConnectionId, node: &ObjectNode, again: bool) {
+    if !again && READ.with(|r| r.borrow().contains(tab)) {
+        return;
+    }
+    let view = view_of(tab);
+    let result = read(tab, connection, node, &view.filter, &view.order);
+    views().update(|m| m.entry(tab.to_owned()).or_default().error = result.err());
+}
+
+/// Reads tab `tab`'s rows again with `filter` and `order`, and keeps them as its Data page's
+/// narrowing if they could be used.
+fn narrow(tab: &str, filter: String, order: Vec<Sort>) {
+    let state = ui();
+    let Some(t) = state.tab(tab) else {
+        return;
+    };
+    let Some(node) = t.object else {
+        return;
+    };
+    let result = read(tab, &t.connection, &node, &filter, &order);
+    views().update(|m| {
+        let v = m.entry(tab.to_owned()).or_default();
+        match result {
+            Ok(()) => {
+                v.filter = filter;
+                v.order = order;
+                v.error = None;
+            }
+            Err(e) => v.error = Some(e),
+        }
+    });
+}
+
+/// Sorts tab `tab`'s rows after a click on `column`'s header, shift-clicked when `add`.
+pub fn sort_by(tab: &str, column: &str, add: bool) {
+    let view = view_of(tab);
+    narrow(tab, view.filter, cycled(&view.order, column, add));
+}
+
+/// The columns tab `tab`'s rows are sorted by, changing when they change.
+pub fn order_of(tab: String) -> Signal<Vec<Sort>> {
+    let store = views();
+    Memo::new(move |_| {
+        store
+            .with(|m| m.get(&tab).map(|v| v.order.clone()))
+            .unwrap_or_default()
+    })
+    .into()
 }
 
 /// Forgets what was read for tab `tab`, once it is closed.
@@ -77,7 +175,103 @@ pub fn forget(tab: &str) {
     info().update(|m| {
         m.remove(tab);
     });
+    views().update(|m| {
+        m.remove(tab);
+    });
     READ.with(|r| r.borrow_mut().remove(tab));
+}
+
+/// `order` for reading: "id ↑, placed_at ↓".
+fn order_text(order: &[Sort]) -> String {
+    order
+        .iter()
+        .map(|s| format!("{} {}", s.column, if s.descending { "↓" } else { "↑" }))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Above a table's rows: the filter box, and the order the rows are read in.
+#[component]
+pub fn DataFilter(tab: String) -> impl IntoView {
+    let state = ui();
+    let store = views();
+    let mongo = state
+        .tab(&tab)
+        .and_then(|t| {
+            state.connections.with_untracked(|l| {
+                l.iter()
+                    .find(|c| c.config.id == t.connection)
+                    .map(|c| c.config.engine == Engine::MongoDb)
+            })
+        })
+        .unwrap_or(false);
+    let view = {
+        let (tab, store) = (tab.clone(), store.clone());
+        Memo::new(move |_| store.with(|m| m.get(&tab).cloned()).unwrap_or_default())
+    };
+    // What the box holds; the filter itself changes only when it is applied.
+    let draft = RwSignal::new(view.get_untracked().filter);
+    let apply = {
+        let tab = tab.clone();
+        move || narrow(&tab, draft.get_untracked(), view.get_untracked().order)
+    };
+    let clear = {
+        let tab = tab.clone();
+        move || {
+            draft.set(String::new());
+            narrow(&tab, String::new(), view.get_untracked().order);
+        }
+    };
+    let unsort = {
+        let tab = tab.clone();
+        move |_| narrow(&tab, view.get_untracked().filter, Vec::new())
+    };
+    let (apply_key, apply_click) = (apply.clone(), apply);
+    let (clear_click, placeholder) = (
+        clear,
+        if mongo {
+            r#"A query document, for example {"status": "open"}; Enter applies it"#
+        } else {
+            "A SQL condition, for example id > 10 and status = 'open'; Enter applies it"
+        },
+    );
+    view! {
+        <div class="data-head">
+        <div class="data-filter" role="search" aria-label="Filter the rows">
+            <span class="filter-label" aria-hidden="true">{if mongo { "Filter" } else { "WHERE" }}</span>
+            <input class="filter-input" type="text" spellcheck="false" autocomplete="off"
+                aria-label=if mongo { "Filter the documents with a query document" } else { "Filter the rows with a SQL condition" }
+                placeholder=placeholder
+                prop:value=move || draft.get()
+                on:input=move |ev| draft.set(event_target_value(&ev))
+                on:keydown=move |ev: web_sys::KeyboardEvent| match ev.key().as_str() {
+                    "Enter" => {
+                        ev.prevent_default();
+                        apply_key();
+                    }
+                    "Escape" => draft.set(view.get_untracked().filter),
+                    _ => {}
+                } />
+            <button class="btn small filter-apply" title="Read the rows that match from the server"
+                on:click=move |_| apply_click()>"Apply"</button>
+            <button class="btn small filter-clear" title="Read every row again"
+                disabled=move || view.with(|v| v.filter.is_empty()) && draft.with(String::is_empty)
+                on:click=move |_| clear_click()>"Clear"</button>
+            {move || {
+                let order = view.with(|v| v.order.clone());
+                (!order.is_empty()).then(|| view! {
+                    <span class="sort-state" title="Click a column header to sort by it; shift-click to sort by several">
+                        {format!("Sorted by {}", order_text(&order))}
+                    </span>
+                    <button class="btn small sort-clear" on:click=unsort.clone()>"Clear sort"</button>
+                })
+            }}
+        </div>
+        {move || view.with(|v| v.error.clone()).map(|e| view! {
+            <div class="note danger data-error" role="alert">{e}</div>
+        })}
+        </div>
+    }
 }
 
 fn kind_label(kind: ObjectKind) -> &'static str {

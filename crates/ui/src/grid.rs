@@ -18,7 +18,25 @@ use treasury_ipc::{
     CellEdit, CopyFormat, CopyView, EditInfo, Expiry, ExportFormat, ExportView, RowEdits,
     WindowView,
 };
+use treasury_sql::narrow::Sort;
 use wasm_bindgen::JsCast;
+
+/// Sorting by a click on a column's header, which reads the rows again from the server.
+#[derive(Clone, Copy)]
+pub struct Sorting {
+    /// The columns the rows are sorted by.
+    pub order: Signal<Vec<Sort>>,
+    /// Called with the clicked column's name, and whether shift was held.
+    pub on_sort: Callback<(String, bool)>,
+}
+
+/// Where `column` stands in `order`: its place from 1 and whether it is sorted largest first.
+fn sorted_at(order: &[Sort], column: &str) -> Option<(usize, bool)> {
+    order
+        .iter()
+        .position(|s| s.column == column)
+        .map(|i| (i + 1, order[i].descending))
+}
 
 const ROW: f64 = 24.0;
 const BLOCK: u64 = 200;
@@ -186,8 +204,20 @@ pub fn Results(
     /// Called with a result whose edits were saved, to run its statement again.
     #[prop(into)]
     on_saved: Callback<u64>,
+    /// Sorting on the server, for a table's Data page; without it the headers do not sort.
+    #[prop(optional_no_strip)]
+    sorting: Option<Sorting>,
 ) -> impl IntoView {
     let state = ui();
+    let panel = state.row_panel;
+    let toggle_panel = move || {
+        let open = !panel.get_untracked();
+        panel.set(open);
+        crate::home::set_setting(
+            treasury_ipc::Setting::RowPanel,
+            serde_json::Value::Bool(open),
+        );
+    };
     let results = out.results;
     let statuses = out.statuses;
     // The result shown, and which of its sets.
@@ -594,12 +624,16 @@ pub fn Results(
                     }).collect_view()
                 }}
             </div>
+            <div class="result-body">
             <div class="grid" node_ref=viewport on:scroll=on_scroll role="grid" tabindex="0"
                 on:keydown=move |ev: web_sys::KeyboardEvent| {
                     let typing = editing.get_untracked().is_some() || editing_new.get_untracked().is_some();
                     if !typing && (ev.ctrl_key() || ev.meta_key()) && ev.key().eq_ignore_ascii_case("c") {
                         ev.prevent_default();
                         copy(CopyFormat::Tsv);
+                    } else if ev.key() == "F7" {
+                        ev.prevent_default();
+                        toggle_panel();
                     }
                 }>
                 {move || {
@@ -687,8 +721,31 @@ pub fn Results(
                         <table>
                             <thead><tr>
                                 <th class="rownum">"#"</th>
-                                {s.columns.iter().map(|c| view! {
-                                    <th title=c.type_name.clone()>{c.name.clone()}<span class="type">{c.type_name.clone()}</span></th>
+                                {s.columns.iter().map(|c| match sorting {
+                                    Some(so) => {
+                                        let name = c.name.clone();
+                                        let at = so.order.with(|o| sorted_at(o, &name));
+                                        let several = so.order.with(Vec::len) > 1;
+                                        let mark = at.map(|(n, down)| {
+                                            let arrow = if down { "↓" } else { "↑" };
+                                            if several { format!("{arrow}{n}") } else { arrow.to_owned() }
+                                        });
+                                        let aria = at.map(|(_, down)| if down { "descending" } else { "ascending" });
+                                        let label = name.clone();
+                                        view! {
+                                            <th class:sorted=at.is_some() aria-sort=aria title=c.type_name.clone()>
+                                                <button class="col-sort" title="Sort by this column on the server; shift-click to sort by several"
+                                                    on:click=move |ev| so.on_sort.run((name.clone(), ev.shift_key()))>
+                                                    {label}
+                                                    {mark.map(|m| view! { <span class="sort-mark">{m}</span> })}
+                                                </button>
+                                                <span class="type">{c.type_name.clone()}</span>
+                                            </th>
+                                        }.into_any()
+                                    }
+                                    None => view! {
+                                        <th title=c.type_name.clone()>{c.name.clone()}<span class="type">{c.type_name.clone()}</span></th>
+                                    }.into_any(),
                                 }).collect_view()}
                             </tr></thead>
                             <tbody>
@@ -757,6 +814,54 @@ pub fn Results(
                 {move || status.get().filter(|s| !s.notices.is_empty()).map(|s| view! {
                     <div class="notices">{s.notices.iter().map(|n| view! { <div>{n.message.clone()}</div> }).collect_view()}</div>
                 })}
+            </div>
+            {move || panel.get().then(|| view! {
+                <aside class="row-panel" aria-label="Selected row">
+                    <div class="row-panel-bar">
+                        <strong>{move || selected.get().map_or("Row".to_owned(), |(r, _)| format!("Row {}", thousands(r + 1)))}</strong>
+                        <button class="row-panel-close" aria-label="Close the row panel" title="Close (F7)"
+                            on:click=move |_| toggle_panel()>"×"</button>
+                    </div>
+                    {move || {
+                        let st = status.get();
+                        let Some(s) = st.as_ref().and_then(|st| st.sets.get(set.get()).cloned()).filter(|s| !s.columns.is_empty()) else {
+                            return view! { <p class="message">"No rows to show."</p> }.into_any();
+                        };
+                        let Some((row, column)) = selected.get() else {
+                            return view! { <p class="message">"Select a cell to see its row here."</p> }.into_any();
+                        };
+                        let Some(cells) = blocks.with(|b| b.get(&(row / BLOCK)).and_then(|blk| blk.get((row % BLOCK) as usize)).cloned()) else {
+                            return view! { <p class="message">"Reading…"</p> }.into_any();
+                        };
+                        let edits = pending.get();
+                        let deleted = edits.deletes.contains(&row);
+                        view! {
+                            {deleted.then(|| view! { <p class="note danger">"This row will be deleted when the changes are saved."</p> })}
+                            <dl class="row-fields">
+                                {s.columns.iter().zip(cells).enumerate().map(|(c, (col, cell))| {
+                                    let changed = pending_value(&edits, row, c);
+                                    let (text, null) = match &changed {
+                                        Some(Some(t)) => (t.clone(), false),
+                                        Some(None) => (String::new(), true),
+                                        None => (cell.text.clone(), cell.null),
+                                    };
+                                    let cut = changed.is_none() && cell.truncated;
+                                    view! {
+                                        <dt class:on=c == column>
+                                            <span class="fname">{col.name.clone()}</span>
+                                            <span class="type">{col.type_name.clone()}</span>
+                                        </dt>
+                                        <dd class:null=null class:changed=changed.is_some()>
+                                            {if null { "NULL".to_owned() } else { text }}
+                                            {cut.then(|| view! { <span class="cut">"Cut short here. Copy as… gives the whole value."</span> })}
+                                        </dd>
+                                    }
+                                }).collect_view()}
+                            </dl>
+                        }.into_any()
+                    }}
+                </aside>
+            })}
             </div>
             <div class="result-foot">
                 {move || status.get().and_then(|st| st.sets.get(set.get()).cloned()).filter(|s| !s.columns.is_empty()).map(|s| {
@@ -848,6 +953,11 @@ pub fn Results(
                         <button class="btn small primary" on:click=review>"Review changes"</button>
                     })
                 }}
+                {move || status.get().and_then(|st| st.sets.get(set.get()).map(|s| !s.columns.is_empty())).unwrap_or(false).then(|| view! {
+                    <button class="btn small row-panel-toggle" aria-pressed=move || panel.get().to_string()
+                        title="Show the selected row beside the grid, one field per line (F7)"
+                        on:click=move |_| toggle_panel()>"Row panel"</button>
+                })}
                 {move || result.get().map(|_| view! {
                     <span>"Export"</span>
                     {ExportFormat::ALL.iter().map(|f| {
