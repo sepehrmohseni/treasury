@@ -21,7 +21,7 @@ testcontainers = { version = "0.28.0", default-features = false }
 serde_json.workspace = true
 # The desktop tests talk WebDriver to tauri-driver on this machine: plain HTTP, no TLS.
 ureq = { version = "3.5.2", default-features = false, features = ["json"] }
-base64 = "0.22.1"
+base64 = "0.23.1"
 
 [dev-dependencies]
 treasury-tunnel.workspace = true
