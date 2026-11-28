@@ -19,7 +19,9 @@ the [project page](https://sepehrmohseni.github.io/treasury/) and with each
   databases, schemas, tables, views, functions and indexes, or its Redis keys grouped by `:`.
   Several connections can be open at once; right-click any node for what it can do.
 - Double-click a table, view or collection to open its editor: its columns, indexes, foreign
-  keys, DDL and size, and its rows in an editable grid.
+  keys, DDL and size, and its rows in an editable grid. Filter the rows with a SQL condition (a
+  query document for MongoDB) and click column headers to sort them; both run on the server.
+  The tree reads itself again after a statement creates, changes or drops an object.
 - Work in several tabs per connection, kept with their text across restarts, and save tabs as
   queries in folders. Search the history of what ran on each connection.
 - Write statements in an editor that highlights them and suggests names; run the one under the
@@ -27,7 +29,8 @@ the [project page](https://sepehrmohseni.github.io/treasury/) and with each
   1,000-row limit unless you turn it off. Ctrl+K finds connections, tables, saved queries and
   actions.
 - Read results in a grid that only fetches the rows in view, so large results stay fast; copy a
-  selection as TSV, CSV, JSON, Markdown or INSERT statements.
+  selection as TSV, CSV, JSON, Markdown or INSERT statements. The row panel (F7) shows the
+  selected row beside the grid, one field per line.
 - Edit, add and delete the rows of a result that comes from one table, edit the documents a
   MongoDB find returned, and edit what a Redis key holds (hash fields, set and sorted set
   members, list entries, a string's value) and when it expires. Changes collect in the grid, and
