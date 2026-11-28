@@ -834,6 +834,7 @@ fn ConfirmDialog(
     let expected = name.clone();
     let ready = move || !needs_name || typed.get().trim() == expected.trim();
     let token = prepared.token;
+    let class = prepared.class;
     let (conn_run, stmt_run) = (connection.clone(), statement.clone());
     // Anything but running the statement stops a script it is part of.
     let (stop_tab, stop_unlock) = (tab.clone(), tab.clone());
@@ -848,6 +849,7 @@ fn ConfirmDialog(
             statement: stmt_run.clone(),
             token,
             typed_name: needs_name.then(|| typed.get_untracked()),
+            class,
         }));
         close();
     };

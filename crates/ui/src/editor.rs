@@ -304,7 +304,10 @@ fn begin(tab: String, statement: String, limit: bool, slot: Slot, step: Option<(
                     // Its tables may change; completion reads them again.
                     crate::complete::fetch::forget(&connection);
                 }
-                run(tab, connection, statement, p.token, None, limit, slot).await;
+                run(
+                    tab, connection, statement, p.token, None, limit, slot, p.class,
+                )
+                .await;
             }
             Ok(p) => state.dialog.set(Dialog::Confirm {
                 tab,
@@ -424,7 +427,9 @@ fn close_all(out: crate::state::Output) {
 }
 
 /// Runs a statement the guardrails allowed, puts its result in `slot`, and goes on with the
-/// script when it is part of one.
+/// script when it is part of one. Once a statement of class `class` that changes objects has
+/// ended, the navigator reads the connection's objects again.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     tab: String,
     connection: ConnectionId,
@@ -433,6 +438,7 @@ pub async fn run(
     typed_name: Option<String>,
     limit: bool,
     slot: Slot,
+    class: StatementClass,
 ) {
     let state = ui();
     let Some(out) = state.outputs.with_untracked(|m| m.get(&tab).copied()) else {
@@ -472,13 +478,28 @@ pub async fn run(
         Slot::Append => r.push(rid),
         Slot::Replace => *r = vec![rid],
     });
+    let ddl = class == StatementClass::Ddl;
     if slot != Slot::Append {
+        if ddl {
+            leptos::task::spawn_local(async move {
+                if let Ok(status) =
+                    ipc::call::<_, ExecutionStatus>("finish", &serde_json::json!({ "result": rid }))
+                        .await
+                    && status.error.is_none()
+                {
+                    crate::navigator::refresh(&connection);
+                }
+            });
+        }
         return;
     }
     // The next statement of a script starts only once this one has ended.
     match ipc::call::<_, ExecutionStatus>("finish", &serde_json::json!({ "result": rid })).await {
         Ok(status) => {
             let broke = status.error.is_some();
+            if ddl && !broke {
+                crate::navigator::refresh(&connection);
+            }
             out.statuses.update(|m| {
                 m.insert(rid, status);
             });
@@ -743,6 +764,7 @@ pub fn Workspace() -> impl IntoView {
             statement,
             token,
             typed_name,
+            class,
         }) = state.approved.get()
         {
             state.approved.set(None);
@@ -754,7 +776,9 @@ pub fn Workspace() -> impl IntoView {
                 Some(l) => (l, Slot::Append),
                 None => (limit.get_untracked(), Slot::Replace),
             };
-            leptos::task::spawn_local(run(tab, connection, statement, token, typed_name, l, slot));
+            leptos::task::spawn_local(run(
+                tab, connection, statement, token, typed_name, l, slot, class,
+            ));
         }
     });
 

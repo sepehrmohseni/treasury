@@ -2,6 +2,7 @@
 
 use leptos::prelude::*;
 use std::collections::{HashMap, HashSet};
+use treasury_core::analyze::StatementClass;
 use treasury_core::config::{ConnectionConfig, ConnectionId};
 use treasury_core::exec::ExecutionStatus;
 use treasury_core::schema::{ObjectNode, ObjectPath};
@@ -237,6 +238,8 @@ pub struct Approved {
     pub statement: String,
     pub token: u64,
     pub typed_name: Option<String>,
+    /// What the statement is, as the guardrails read it.
+    pub class: StatementClass,
 }
 
 impl Ui {
