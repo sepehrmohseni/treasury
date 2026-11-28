@@ -213,6 +213,8 @@ pub struct Ui {
     pub open_rows: RwSignal<Option<(String, String)>>,
     /// Connections expanded in the navigator.
     pub expanded: RwSignal<HashSet<ConnectionId>>,
+    /// Objects and folders expanded in the navigator, kept while the tree is read again.
+    pub open_nodes: RwSignal<HashSet<(ConnectionId, ObjectPath)>>,
     /// The node selected in the navigator: a connection (its root path) or an object.
     pub selected: RwSignal<Option<(ConnectionId, ObjectPath)>>,
     /// The right-click menu shown.
@@ -272,6 +274,7 @@ impl Ui {
             selected: RwSignal::new(None),
             menu: RwSignal::new(None),
             tree_rev: RwSignal::new(HashMap::new()),
+            open_nodes: RwSignal::new(HashSet::new()),
             nav_filter: RwSignal::new(String::new()),
             pages: RwSignal::new(HashMap::new()),
             side_width: RwSignal::new(DEFAULT_SIDE_WIDTH),

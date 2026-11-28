@@ -90,12 +90,13 @@ fn disconnect(id: ConnectionId) {
         state.expanded.update(|e| {
             e.remove(&id);
         });
+        state.open_nodes.update(|s| s.retain(|(c, _)| *c != id));
         crate::complete::fetch::forget(&id);
     });
 }
 
 /// Reads connection `id`'s objects again from the server.
-fn refresh(id: &ConnectionId) {
+pub fn refresh(id: &ConnectionId) {
     let state = ui();
     state.tree_rev.update(|m| {
         *m.entry(id.clone()).or_default() += 1;
@@ -164,7 +165,10 @@ pub fn Navigator() -> impl IntoView {
                 disabled=move || selected_connection().is_none_or(|c| link_of(&c) != Link::Open)
                 on:click=move |_| if let Some(c) = selected_connection() { refresh(&c) }>"Refresh"</button>
             <button class="btn small nav-collapse" title="Collapse every connection"
-                on:click=move |_| state.expanded.set(HashSet::new())>"Collapse"</button>
+                on:click=move |_| {
+                    state.expanded.set(HashSet::new());
+                    state.open_nodes.set(HashSet::new());
+                }>"Collapse"</button>
         </div>
         <div class="nav-filter">
             <input id="nav-filter" type="search" placeholder="Filter connections" aria-label="Filter connections"
@@ -250,7 +254,9 @@ fn ConnectionNode(view: ConnectionView) -> impl IntoView {
                             view! {
                                 <div class="tree" role="group">
                                     {move || {
-                                        rev.track();
+                                        // Read, not only tracked: a memo nobody has read is never
+                                        // computed, so it would not hear of the change.
+                                        let _ = rev.get();
                                         view! { <TreeLevel connection=id.clone() path=ObjectPath::root() depth=1 /> }
                                     }}
                                 </div>
@@ -354,7 +360,18 @@ fn TreeLevel(connection: ConnectionId, path: ObjectPath, depth: usize) -> impl I
 #[component]
 fn TreeNode(connection: ConnectionId, node: ObjectNode, depth: usize) -> impl IntoView {
     let state = ui();
-    let open = RwSignal::new(false);
+    let key = (connection.clone(), node.path.clone());
+    let open = Memo::new({
+        let key = key.clone();
+        move |_| state.open_nodes.with(|s| s.contains(&key))
+    });
+    let flip = move || {
+        state.open_nodes.update(|s| {
+            if !s.remove(&key) {
+                s.insert(key.clone());
+            }
+        })
+    };
     let expandable = node.expandable;
     let opens = has_editor(node.kind) || node.kind == ObjectKind::Key;
     let path = node.path.clone();
@@ -372,13 +389,13 @@ fn TreeNode(connection: ConnectionId, node: ObjectNode, depth: usize) -> impl In
         move || state.selected.set(Some((connection.clone(), path.clone())))
     };
     let click = {
-        let select = select.clone();
+        let (select, flip) = (select.clone(), flip.clone());
         // Folders open with a click; objects with an editor open their children with the
         // arrow, since a double-click opens the editor.
         move |_| {
             select();
             if expandable && !opens {
-                open.update(|o| *o = !*o);
+                flip();
             }
         }
     };
@@ -388,7 +405,7 @@ fn TreeNode(connection: ConnectionId, node: ObjectNode, depth: usize) -> impl In
             ev.stop_propagation();
             select();
             if expandable {
-                open.update(|o| *o = !*o);
+                flip();
             }
         }
     };
